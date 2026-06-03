@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -91,6 +92,28 @@ def unzip_cache_dir(zip_path: str | Path, target_dir: str | Path) -> Path:
     zip_path = Path(zip_path)
     target_dir = Path(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
+
+    seven_zip = shutil.which("7z") or shutil.which("7za")
+    unzip = shutil.which("unzip")
+
+    if seven_zip is not None:
+        subprocess.run(
+            [seven_zip, "x", "-y", f"-o{target_dir}", str(zip_path)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return target_dir
+
+    if unzip is not None:
+        subprocess.run(
+            [unzip, "-o", str(zip_path), "-d", str(target_dir)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return target_dir
+
     with zipfile.ZipFile(zip_path) as zf:
         zf.extractall(target_dir)
     return target_dir
