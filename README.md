@@ -1,4 +1,4 @@
-**On the local machine: tokenize and zip**
+**Local machine: build and zip**
 Run from the repo root:
 
 ```bash
@@ -12,14 +12,22 @@ Run from the repo root:
   --tokenize-batch-size 100
 ```
 
-Adjust `--num-proc` to match your local CPU cores. If you want, you can also leave it out and let the script choose the default.
-
-What this produces:
-- `./emotion_cache/`
+That produces:
+- `./emotion_cache/tokenized.parquet`
+- `./emotion_cache/texts.parquet`
+- `./emotion_cache/cache_meta.json`
 - `./emotion_cache.zip`
 
-**On the A100 in the cloud: run inference from the zip**
-Put the zip somewhere accessible on the A100 instance, then run:
+**Upload location in the cloud**
+Upload `emotion_cache.zip` to any writable/readable path on the A100 instance, for example:
+- `/home/youruser/emotion_cache.zip`
+- `./emotion_cache.zip` in the repo root
+- `/mnt/data/emotion_cache.zip` if your cloud setup provides mounted storage
+
+The only requirement is that the A100 can read the file path you pass to `--cache-zip`.
+
+**On the A100: run inference**
+After uploading and unpacking are handled by the script itself, run:
 
 ```bash
 .venv/bin/python run_bootstrap.py \
@@ -29,11 +37,3 @@ Put the zip somewhere accessible on the A100 instance, then run:
   --model facebook/bart-large-mnli \
   --batch-size 32
 ```
-
-**Where to upload the zip file**
-Upload `emotion_cache.zip` to the A100 machine into any path you can read from, for example:
-- the repo root: `./emotion_cache.zip`
-- a data folder: `./data/emotion_cache.zip`
-- an attached volume or mounted storage path
-
-Then point `--cache-zip` at that exact path.
