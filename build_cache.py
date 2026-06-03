@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from datasets import load_dataset
+from datasets import Dataset, load_dataset
 from tqdm import tqdm
 
 from emotion_bootstrapper import SEMANTIC_HYPOTHESES, VerboseSemanticBootstrapper
@@ -35,6 +35,14 @@ def main() -> None:
         batch_size=args.tokenize_batch_size,
         num_proc=args.num_proc,
     )
+    keep_columns = [
+        column
+        for column in ("input_ids", "attention_mask", "token_type_ids", "text_index", "label_index")
+        if column in tokenized.column_names
+    ]
+    tokenized = tokenized.remove_columns(
+        [column for column in tokenized.column_names if column not in keep_columns]
+    )
 
     save_dataset_cache(
         tokenized,
@@ -47,7 +55,11 @@ def main() -> None:
             "model": args.model,
             "num_emotions": len(SEMANTIC_HYPOTHESES),
             "num_rows": len(dataset),
+            "kept_columns": keep_columns,
         },
+    )
+    Dataset.from_dict({"text": dataset[args.text_column]}).to_parquet(
+        Path(args.cache_dir) / "texts.parquet"
     )
     zip_cache_dir(args.cache_dir, args.zip_path)
     print(f"Wrote cache: {args.cache_dir}")

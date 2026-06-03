@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from datasets import Dataset, DatasetDict
+import pandas as pd
 
 CACHE_FORMAT_VERSION = 1
 DEFAULT_CACHE_META_NAME = "cache_meta.json"
@@ -47,9 +48,6 @@ def save_dataset_cache(
 
 
 def load_dataset_cache(cache_dir: str | Path) -> Dataset | DatasetDict:
-    from datasets import Dataset, DatasetDict
-    import pandas as pd
-
     cache_dir = Path(cache_dir)
     split_paths = sorted(cache_dir.glob("*.parquet"))
     if not split_paths:
@@ -58,12 +56,22 @@ def load_dataset_cache(cache_dir: str | Path) -> Dataset | DatasetDict:
     if len(split_paths) == 1 and split_paths[0].stem == "dataset":
         return Dataset.from_pandas(pd.read_parquet(split_paths[0]), preserve_index=False)
 
+    if len(split_paths) == 1 and split_paths[0].stem in {"texts", "tokenized"}:
+        return Dataset.from_pandas(pd.read_parquet(split_paths[0]), preserve_index=False)
+
     splits: dict[str, Dataset] = {}
     for split_path in split_paths:
         splits[split_path.stem] = Dataset.from_pandas(
             pd.read_parquet(split_path), preserve_index=False
         )
     return DatasetDict(splits)
+
+
+def load_parquet_dataset(path: str | Path) -> Dataset:
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Missing cache file: {path}")
+    return Dataset.from_pandas(pd.read_parquet(path), preserve_index=False)
 
 
 def zip_cache_dir(source_dir: str | Path, zip_path: str | Path) -> Path:

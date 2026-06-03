@@ -7,7 +7,7 @@ import torch
 from datasets import Dataset
 
 from emotion_bootstrapper import VerboseSemanticBootstrapper, save_dataset_as_parquet
-from emotion_cache import load_dataset_cache, unzip_cache_dir
+from emotion_cache import load_parquet_dataset, unzip_cache_dir
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,21 +28,15 @@ def main() -> None:
     cache_dir = work_dir / "cache"
     unzip_cache_dir(args.cache_zip, cache_dir)
 
-    tokenized = load_dataset_cache(cache_dir)
-    if not isinstance(tokenized, Dataset):
-        raise TypeError("Expected a single Dataset cache for bootstrap inference")
+    tokenized = load_parquet_dataset(cache_dir / "tokenized.parquet")
+    texts_ds = load_parquet_dataset(cache_dir / "texts.parquet")
 
     bootstrapper = VerboseSemanticBootstrapper(model=args.model)
-    required = {"text_index", "label_index", "source_text"}
+    required = {"text_index", "label_index", "input_ids", "attention_mask"}
     if not required.issubset(set(tokenized.column_names)):
         raise ValueError("Tokenized cache is missing required index columns")
 
-    text_count = max(tokenized["text_index"]) + 1 if len(tokenized) else 0
-    texts = [""] * text_count
-    for text_index, source_text in zip(tokenized["text_index"], tokenized["source_text"]):
-        if not texts[text_index]:
-            texts[text_index] = source_text
-    dataset = Dataset.from_dict({"text": texts})
+    dataset = Dataset.from_dict({"text": texts_ds["text"]})
 
     text_to_scores = {}
     pair_batch_size = max(1, args.batch_size * len(bootstrapper.hypotheses))
