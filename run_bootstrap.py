@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import math
+import os
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import torch
@@ -22,6 +26,49 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _infer_shard(shard_payload: dict) -> dict[int, list[float]]:
+    device_id = shard_payload["device_id"]
+    model_name = shard_payload["model"]
+    batch_size = shard_payload["batch_size"]
+    text_indices = shard_payload["text_indices"]
+    label_indices = shard_payload["label_indices"]
+    input_ids = shard_payload["input_ids"]
+    attention_mask = shard_payload["attention_mask"]
+    token_type_ids = shard_payload.get("token_type_ids")
+
+    bootstrapper = VerboseSemanticBootstrapper(model=model_name, device_map="cpu")
+    if torch.cuda.is_available():
+        bootstrapper.device = torch.device(f"cuda:{device_id}")
+        bootstrapper.model.to(bootstrapper.device)
+    bootstrapper.model.eval()
+
+    results: dict[int, list[float]] = {}
+    pair_batch_size = max(1, batch_size * len(bootstrapper.hypotheses))
+
+    for start in range(0, len(text_indices), pair_batch_size):
+        end = start + pair_batch_size
+        inputs = {
+            "input_ids": torch.tensor(input_ids[start:end]).to(bootstrapper.device),
+            "attention_mask": torch.tensor(attention_mask[start:end]).to(bootstrapper.device),
+        }
+        if token_type_ids is not None:
+            inputs["token_type_ids"] = torch.tensor(token_type_ids[start:end]).to(
+                bootstrapper.device
+            )
+        with torch.no_grad():
+            logits = bootstrapper.model(**inputs).logits
+            probs = torch.softmax(logits, dim=-1)
+            entailment_scores = probs[:, bootstrapper.entailment_id].detach().cpu().tolist()
+
+        for text_index, label_index, score in zip(
+            text_indices[start:end], label_indices[start:end], entailment_scores
+        ):
+            results.setdefault(text_index, [0.0] * len(bootstrapper.hypotheses))
+            results[text_index][label_index] = float(score)
+
+    return results
+
+
 def main() -> None:
     args = parse_args()
     work_dir = Path(args.work_dir)
@@ -37,25 +84,43 @@ def main() -> None:
         raise ValueError("Tokenized cache is missing required index columns")
 
     dataset = Dataset.from_dict({"text": texts_ds["text"]})
+    gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    print(f"Detected {gpu_count} GPU(s)")
+
+    if gpu_count <= 1:
+        shards = [tokenized]
+    else:
+        shard_size = math.ceil(len(tokenized) / gpu_count)
+        shards = [
+            tokenized.select(range(start, min(start + shard_size, len(tokenized))))
+            for start in range(0, len(tokenized), shard_size)
+        ]
+
+    shard_payloads = []
+    for device_id, shard in enumerate(shards):
+        shard_payloads.append(
+            {
+                "device_id": device_id,
+                "model": args.model,
+                "batch_size": args.batch_size,
+                "text_indices": shard["text_index"],
+                "label_indices": shard["label_index"],
+                "input_ids": shard["input_ids"],
+                "attention_mask": shard["attention_mask"],
+                "token_type_ids": shard["token_type_ids"] if "token_type_ids" in shard.column_names else None,
+            }
+        )
 
     text_to_scores = {}
-    pair_batch_size = max(1, args.batch_size * len(bootstrapper.hypotheses))
-    for start in range(0, len(tokenized), pair_batch_size):
-        batch = tokenized[start : start + pair_batch_size]
-        inputs = {
-            key: torch.tensor(value).to(bootstrapper.device)
-            for key, value in batch.items()
-            if key in {"input_ids", "attention_mask", "token_type_ids"}
-        }
-        with torch.no_grad():
-            logits = bootstrapper.model(**inputs).logits
-            probs = torch.softmax(logits, dim=-1)
-            entailment_scores = probs[:, bootstrapper.entailment_id].detach().cpu().tolist()
-        for text_index, label_index, score in zip(
-            batch["text_index"], batch["label_index"], entailment_scores
-        ):
-            text_to_scores.setdefault(text_index, [0.0] * len(bootstrapper.hypotheses))
-            text_to_scores[text_index][label_index] = float(score)
+    if gpu_count <= 1:
+        shard_results = [_infer_shard(shard_payloads[0])]
+    else:
+        with ProcessPoolExecutor(max_workers=gpu_count, mp_context=mp.get_context("spawn")) as executor:
+            shard_results = list(executor.map(_infer_shard, shard_payloads))
+
+    for shard_result in shard_results:
+        for text_index, scores in shard_result.items():
+            text_to_scores[text_index] = scores
 
     emotion_vectors = [
         {
