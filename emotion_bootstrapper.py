@@ -13,13 +13,13 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 
 SEMANTIC_HYPOTHESES = {
-    "fear": "someone with an unpleasant feeling caused by the threat of danger or pain",
-    "anger": "someone with a strong feeling of annoyance, displeasure, or hostility",
-    "surprise": "someone with a feeling of mild shock or astonishment",
-    "joy": "someone with a feeling of great pleasure and happiness",
-    "sadness": "someone with a feeling of deep distress caused by loss or disappointment",
-    "disgust": "someone with a feeling or expressing revulsion or strong disapproval",
-    "urgency": "someone feeling a strong need to act immediately due to time pressure",
+    "fear": "mentioned someone with at least an unpleasant feeling caused by the threat of danger or pain",
+    "anger": "mentioned someone with at least a strong feeling of annoyance, displeasure, or hostility",
+    "surprise": "mentioned someone with at least a feeling of mild shock or astonishment",
+    "joy": "mentioned someone with at least a feeling of great pleasure and happiness",
+    "sadness": "mentioned someone with at least a feeling of deep distress caused by loss or disappointment",
+    "disgust": "mentioned someone with at least a feeling or expressing revulsion or strong disapproval",
+    "urgency": "mentioned someone with at least a feeling of a strong need to act immediately due to time pressure",
 }
 
 
