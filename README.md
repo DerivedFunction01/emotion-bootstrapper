@@ -8,8 +8,7 @@ Run from the repo root:
   --text-column text \
   --cache-dir ./emotion_cache \
   --zip-path ./emotion_cache.zip \
-  --num-proc 8 \
-  --tokenize-batch-size 100
+  --tokenize-batch-size 1000
 ```
 
 That produces:
