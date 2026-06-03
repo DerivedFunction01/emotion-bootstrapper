@@ -109,6 +109,7 @@ class VerboseSemanticBootstrapper:
         hypotheses = []
         text_indices = []
         label_indices = []
+        source_texts = []
 
         for text_index, text in enumerate(texts):
             for label_index, hypothesis in enumerate(self.hypotheses):
@@ -116,6 +117,7 @@ class VerboseSemanticBootstrapper:
                 hypotheses.append(hypothesis)
                 text_indices.append(text_index)
                 label_indices.append(label_index)
+                source_texts.append(text)
 
         tokenized = self.tokenizer(
             input_texts,
@@ -126,6 +128,7 @@ class VerboseSemanticBootstrapper:
         )
         tokenized["text_index"] = text_indices
         tokenized["label_index"] = label_indices
+        tokenized["source_text"] = source_texts
         return tokenized
 
     def tokenize_dataset(
