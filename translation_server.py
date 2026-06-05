@@ -74,8 +74,7 @@ class TranslationServer(BaseHTTPRequestHandler):
         with torch.no_grad():
             generated_tokens = self.model.generate(
                 **inputs,
-                forced_bos_token_id=forced_bos_token_id,
-                max_new_tokens=200,
+                forced_bos_token_id=forced_bos_token_id
             )
         translations = [
             self.tokenizer.decode(tokens, skip_special_tokens=True)
