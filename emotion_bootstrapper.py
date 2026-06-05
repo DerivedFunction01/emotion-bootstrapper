@@ -13,13 +13,15 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 
 SEMANTIC_HYPOTHESES = {
-    "fear": "Someone has a strong feeling of fear caused by the threat of danger or pain",
-    "anger": "Someone has a strong feeling of annoyance, displeasure, or hostility",
-    "surprise": "Someone has a strong feeling of mild shock or astonishment",
-    "joy": "Someone has a strong feeling of great pleasure and happiness",
-    "sadness": "Someone has a strong feeling of deep distress caused by loss or disappointment",
-    "disgust": "Someone has a strong feeling of revulsion or strong disapproval",
-    "urgency": "Someone has a strong feeling of urgency to act immediately due to time pressure",
+    "fear": "Someone has at least at least a strong feeling of fear caused by the threat of danger or pain",
+    "anger": "Someone has at least a strong feeling of annoyance, displeasure, or hostility",
+    "surprise": "Someone has at least a strong feeling of mild shock or astonishment",
+    "joy": "Someone has at least a strong feeling of great pleasure and happiness",
+    "sadness": "Someone has at least a strong feeling of deep distress caused by loss or disappointment",
+    "disgust": "Someone has at least a strong feeling of revulsion or strong disapproval",
+    "urgency": "Someone has at least a strong feeling of urgency to act immediately due to time pressure",
+    "confusion": "Someone has at least a strong feeling of struggling to understand something complex or confusing",
+    "emotion": "There is someone with feelings of either fear, anger, surprise, joy, sadness, disgust, urgency, or confusion",
 }
 
 
@@ -102,7 +104,7 @@ class VerboseSemanticBootstrapper:
         return self.label_texts([text])[0]
 
     def _tokenize_pairs(
-        self, batch: Dict[str, List[str]], text_column: str
+        self, batch: Dict[str, List[str]], indices: List[int], text_column: str
     ) -> Dict[str, List]:
         texts = batch[text_column]
         input_texts = []
@@ -111,10 +113,11 @@ class VerboseSemanticBootstrapper:
         label_indices = []
 
         for text_index, text in enumerate(texts):
+            global_text_index = int(indices[text_index])
             for label_index, hypothesis in enumerate(self.hypotheses):
                 input_texts.append(text)
                 hypotheses.append(hypothesis)
-                text_indices.append(text_index)
+                text_indices.append(global_text_index)
                 label_indices.append(label_index)
 
         tokenized = self.tokenizer(
@@ -142,8 +145,9 @@ class VerboseSemanticBootstrapper:
         )
 
         tokenized = dataset.map(
-            lambda batch: self._tokenize_pairs(batch, text_column),
+            lambda batch, indices: self._tokenize_pairs(batch, indices, text_column),
             batched=True,
+            with_indices=True,
             batch_size=batch_size,
             num_proc=num_proc,
             remove_columns=dataset.column_names,
@@ -335,198 +339,3 @@ class VerboseSemanticBootstrapper:
         print(f"Texts with multiple emotions: {me_dist['texts_with_multiple_emotions']}")
         print(f"Texts with no clear emotion: {me_dist['texts_with_no_clear_emotion']}")
         print("=" * 80 + "\n")
-
-
-class EmotionDatasetPipeline:
-    """Complete pipeline: load -> bootstrap -> save."""
-
-    def __init__(self, model: str = "facebook/bart-large-mnli"):
-        self.bootstrapper = VerboseSemanticBootstrapper(model=model)
-
-    def run(
-        self,
-        dataset_path: str = "dair-ai/emotion",
-        dataset_config: str = "unsplit",
-        text_column: str = "text",
-        output_path: str = "./emotion_bootstrapped.parquet",
-        save_json_stats: str = None,
-    ) -> Tuple[Dataset, Dict]:
-        print("\n" + "=" * 80)
-        print("EMOTION BOOTSTRAPPING PIPELINE")
-        print("=" * 80)
-
-        print(f"\nStep 1: Loading dataset '{dataset_path}'...")
-        dataset_to_process = load_primary_dataset(dataset_path, dataset_config)
-        print(f"  ✓ Loaded {len(dataset_to_process)} texts")
-        print(f"  Columns: {dataset_to_process.column_names}")
-
-        print("\nStep 2: Bootstrapping emotion vectors...")
-        bootstrapped_dataset = self.bootstrapper.bootstrap_dataset(
-            dataset_to_process,
-            text_column=text_column,
-            batch_size=32,
-            show_progress=True,
-            num_proc=max(1, (os.cpu_count() or 1) - 1),
-            tokenized_cache_path="./tokenized_emotion_dataset",
-            tokenized_zip_path="./tokenized_emotion_dataset.zip",
-            raw_cache_path="./emotion_precompute_cache",
-        )
-        print(f"  ✓ Bootstrapped {len(bootstrapped_dataset)} texts")
-
-        print("\nStep 3: Computing statistics...")
-        stats = self.bootstrapper.get_statistics(bootstrapped_dataset)
-        self.bootstrapper.print_statistics(stats)
-
-        print("\nStep 4: Saving to parquet...")
-        save_dataset_as_parquet(bootstrapped_dataset, output_path)
-        print(f"  ✓ Saved to {output_path}")
-        print(f"  File size: {load_parquet_size_mb(output_path):.2f} MB")
-
-        if save_json_stats:
-            print("\nStep 5: Saving statistics to JSON...")
-            with open(save_json_stats, "w") as f:
-                json.dump(stats, f, indent=2)
-            print(f"  ✓ Saved to {save_json_stats}")
-
-        print("\n" + "=" * 80)
-        print("PIPELINE COMPLETE")
-        print("=" * 80 + "\n")
-
-        return bootstrapped_dataset, stats
-
-
-class EmotionDatasetExplorer:
-    """Explore and analyze the bootstrapped dataset."""
-
-    def __init__(self, dataset: Dataset):
-        self.dataset = dataset
-
-    def show_examples(self, num_examples: int = 5):
-        print("\n" + "=" * 80)
-        print(f"SAMPLE TEXTS WITH EMOTION VECTORS (showing {num_examples})")
-        print("=" * 80)
-
-        for i in tqdm(range(min(num_examples, len(self.dataset))), desc="examples"):
-            example = self.dataset[i]
-            text = example["text"]
-            emotion_vector = example["emotion_vector"]
-
-            print(f"\nExample {i + 1}:")
-            print(f"Text: {text[:100]}{'...' if len(text) > 100 else ''}")
-            print("Emotions:")
-            for emotion, score in sorted(
-                emotion_vector.items(), key=lambda x: x[1], reverse=True
-            ):
-                bar = "█" * int(score * 20)
-                print(f"  {emotion:12} {score:.3f} {bar}")
-
-    def find_high_entropy_texts(self, threshold: float = 0.5, num_emotions: int = 3):
-        print("\n" + "=" * 80)
-        print(f"HIGH ENTROPY TEXTS (≥{num_emotions} emotions above {threshold})")
-        print("=" * 80)
-
-        high_entropy_indices = []
-        for i in tqdm(range(len(self.dataset)), desc="scanning"):
-            emotion_vector = self.dataset[i]["emotion_vector"]
-            if sum(1 for s in emotion_vector.values() if s > threshold) >= num_emotions:
-                high_entropy_indices.append(i)
-
-        print(f"\nFound {len(high_entropy_indices)} high-entropy texts\n")
-
-        for idx in tqdm(high_entropy_indices[:5], desc="samples"):
-            example = self.dataset[idx]
-            text = example["text"]
-            emotion_vector = example["emotion_vector"]
-
-            print(f"Text: {text[:100]}...")
-            print("Emotions:")
-            for emotion, score in sorted(
-                emotion_vector.items(), key=lambda x: x[1], reverse=True
-            ):
-                if score > threshold:
-                    print(f"  {emotion:12} {score:.3f}")
-            print()
-
-    def compare_with_original_labels(self, label_column: str = "label"):
-        if label_column not in self.dataset.column_names:
-            print(f"Label column '{label_column}' not found in dataset")
-            return
-
-        print("\n" + "=" * 80)
-        print("COMPARING ZERO-SHOT vs ORIGINAL LABELS")
-        print("=" * 80)
-
-        emotion_map = {
-            0: "sadness",
-            1: "joy",
-            2: "love",
-            3: "anger",
-            4: "fear",
-            5: "surprise",
-            6: "urgency",
-        }
-
-        disagreements = []
-        agreements = 0
-
-        for i in tqdm(range(len(self.dataset)), desc="comparing"):
-            example = self.dataset[i]
-            original_label = emotion_map.get(example[label_column], "unknown")
-            emotion_vector = example["emotion_vector"]
-            top_emotion = max(emotion_vector.items(), key=lambda x: x[1])[0]
-
-            if original_label == top_emotion:
-                agreements += 1
-            else:
-                disagreements.append(
-                    {
-                        "text": example["text"],
-                        "original": original_label,
-                        "zero_shot_top": top_emotion,
-                        "zero_shot_vector": emotion_vector,
-                    }
-                )
-
-        agreement_rate = agreements / len(self.dataset)
-        print(f"\nAgreement rate: {agreement_rate:.1%} ({agreements}/{len(self.dataset)})")
-        print(
-            f"Disagreement rate: {1 - agreement_rate:.1%} ({len(disagreements)}/{len(self.dataset)})"
-        )
-
-        print("\nShowing first 3 disagreements:")
-        for i, disagreement in enumerate(disagreements[:3]):
-            print(f"\nDisagreement {i + 1}:")
-            print(f"  Text: {disagreement['text'][:80]}...")
-            print(f"  Original label: {disagreement['original']}")
-            print(f"  Zero-shot top: {disagreement['zero_shot_top']}")
-            print("  All zero-shot scores:")
-            for emotion, score in sorted(
-                disagreement["zero_shot_vector"].items(), key=lambda x: x[1], reverse=True
-            ):
-                print(f"    {emotion:12} {score:.3f}")
-
-
-if __name__ == "__main__":
-    pipeline_runner = EmotionDatasetPipeline(model="facebook/bart-large-mnli")
-
-    dataset, stats = pipeline_runner.run(
-        dataset_path="dair-ai/emotion",
-        dataset_config="unsplit",
-        text_column="text",
-        output_path="./emotion_bootstrapped.parquet",
-        save_json_stats="./emotion_bootstrap_stats.json",
-    )
-
-    explorer = EmotionDatasetExplorer(dataset)
-    explorer.show_examples(num_examples=5)
-    explorer.find_high_entropy_texts(threshold=0.5, num_emotions=3)
-    explorer.compare_with_original_labels(label_column="label")
-
-    print("\n" + "=" * 80)
-    print("PARQUET FILE INSPECTION")
-    print("=" * 80)
-    df = pd.read_parquet("./emotion_bootstrapped.parquet")
-    print(f"\nDataFrame shape: {df.shape}")
-    print(f"Columns: {df.columns.tolist()}")
-    print(f"\nFirst row:")
-    print(df.iloc[0])

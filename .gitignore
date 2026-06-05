@@ -217,6 +217,7 @@ results/*
 *.csv
 
 .*.*
+*meta*
 
 evaluation_results
 *bert*/

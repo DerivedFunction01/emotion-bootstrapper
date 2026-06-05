@@ -23,6 +23,14 @@ def write_json_atomic(path: str | Path, payload: dict[str, Any]) -> None:
     os.replace(tmp_path, path)
 
 
+def load_json(path: str | Path) -> dict[str, Any]:
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Missing JSON file: {path}")
+    with path.open(encoding="utf-8") as f:
+        return json.load(f)
+
+
 def save_dataset_cache(
     dataset: Dataset | DatasetDict,
     cache_dir: str | Path,
@@ -80,6 +88,32 @@ def zip_cache_dir(source_dir: str | Path, zip_path: str | Path) -> Path:
     zip_path = Path(zip_path)
     if zip_path.exists():
         raise FileExistsError(f"Refusing to overwrite existing zip: {zip_path}")
+
+    seven_zip = shutil.which("7z") or shutil.which("7za")
+    zip_bin = shutil.which("zip")
+
+    if seven_zip is not None:
+        subprocess.run(
+            [seven_zip, "a", "-tzip", str(zip_path), "."],
+            check=True,
+            cwd=source_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return zip_path
+
+    if zip_bin is not None:
+        files = [str(path.relative_to(source_dir)) for path in source_dir.rglob("*") if path.is_file()]
+        if not files:
+            raise FileNotFoundError(f"No files found to zip in {source_dir}")
+        subprocess.run(
+            [zip_bin, "-r", str(zip_path), *files],
+            check=True,
+            cwd=source_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return zip_path
 
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for path in source_dir.rglob("*"):
