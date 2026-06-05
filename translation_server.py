@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -38,6 +39,7 @@ class TranslationServer(BaseHTTPRequestHandler):
     tokenizer = None
     model = None
     device = None
+    translate_lock = threading.Lock()
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
@@ -63,19 +65,20 @@ class TranslationServer(BaseHTTPRequestHandler):
         assert self.tokenizer is not None
         assert self.model is not None
         assert self.device is not None
-        self.tokenizer.src_lang = source_lang
-        inputs = self.tokenizer(
-            [str(text) for text in texts],
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-        ).to(self.device)
-        forced_bos_token_id = self.tokenizer.convert_tokens_to_ids(target_lang)
-        with torch.no_grad():
-            generated_tokens = self.model.generate(
-                **inputs,
-                forced_bos_token_id=forced_bos_token_id
-            )
+        with self.translate_lock:
+            self.tokenizer.src_lang = source_lang
+            inputs = self.tokenizer(
+                [str(text) for text in texts],
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+            ).to(self.device)
+            forced_bos_token_id = self.tokenizer.convert_tokens_to_ids(target_lang)
+            with torch.no_grad():
+                generated_tokens = self.model.generate(
+                    **inputs,
+                    forced_bos_token_id=forced_bos_token_id,
+                )
         translations = [
             self.tokenizer.decode(tokens, skip_special_tokens=True)
             for tokens in generated_tokens
