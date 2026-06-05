@@ -564,7 +564,6 @@ def plot_emotion_correlation_heatmap(df):
     plt.title("Correlation Matrix of Emotion Scores (Emotions Dataset)")
     plt.show()
 
-
 # %%
 emotions_df = load_parquet_frame(LOCAL_EMOTIONS_PARQUET, EMOTIONS_PARQUET_URL)
 emotions_df.head()
@@ -574,6 +573,14 @@ urgency_df.head()
 # %%
 arxiv_df = load_parquet_frame(LOCAL_ARXIV_PARQUET, ARXIV_PARQUET_URL)
 arxiv_df.head()
+# %%%
+all_df = pd.concat([emotions_df, urgency_df, arxiv_df])
+
+# %%
+# Pull in any translated/augmented rows before the final decay pass.
+augmented_df = load_parquet_frame(LOCAL_AUGMENTED_PARQUET, AUGMENTED_PARQUET_URL)
+full_df = pd.concat([all_df, augmented_df])
+
 # %%
 # Baseline analysis (original scores)
 analyze_emotion_dataframe(emotions_df, "Emotions Dataset")
@@ -604,7 +611,6 @@ GATED_THRESHOLD_DECAY_CONFIGS = [
     (10.0, 5.0, 1.25, 0.75, 0.65, 0.85),
 ]
 
-all_df = pd.concat([emotions_df, urgency_df, arxiv_df])
 # %%
 
 all_stats = {}
@@ -713,25 +719,8 @@ chosen_decay_fn = make_decay_formula(
     increment=increment,
     post_rank_3_multiplier=post_rank_3_multiplier,
 )
-
-# Pull in any translated/augmented rows before the final decay pass.
-augmented_df = load_parquet_frame(LOCAL_AUGMENTED_PARQUET, AUGMENTED_PARQUET_URL)
-if not augmented_df.empty:
-    required_columns = {"text", "emotion_vector"}
-    missing_columns = required_columns - set(augmented_df.columns)
-    if missing_columns:
-        raise ValueError(
-            "Augmented parquet is missing required columns: "
-            f"{sorted(missing_columns)}"
-        )
-    all_df = pd.concat([all_df, augmented_df], ignore_index=True, sort=False)
-    print(
-        f"Appended {len(augmented_df):,} augmented rows from "
-        f"{LOCAL_AUGMENTED_PARQUET}."
-    )
-
 # Extract original emotion vectors from all_df
-original_vectors = extract_emotions(all_df)
+original_vectors = extract_emotions(full_df)
 
 # Apply the chosen decay function to the original vectors
 decayed_vectors_final = apply_decay_and_gate_below_threshold_penalty_to_dataset(
@@ -744,7 +733,7 @@ decayed_vectors_final = apply_decay_and_gate_below_threshold_penalty_to_dataset(
 
 # Create the decayed_df
 decayed_df = pd.DataFrame(
-    {"text": all_df["text"].tolist(), "emotion_vector": decayed_vectors_final}
+    {"text": full_df["text"].tolist(), "emotion_vector": decayed_vectors_final}
 )
 
 print(
@@ -760,5 +749,8 @@ plot_emotion_correlation_heatmap(all_df)
 plot_emotion_correlation_heatmap(decayed_df)
 # %%
 decayed_df.to_parquet("emotions_decayed_multilingual_8-4-1.25-85-65-75.parquet")
+
+# %%
+full_df[["text", "emotion_vector"]].to_parquet("emotions_multilingual.parquet")
 
 # %%
