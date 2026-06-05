@@ -27,7 +27,10 @@ ARXIV_PARQUET_URL = (
 )
 
 OUTPUT_PATH = Path("emotions_decayed_samples.parquet")
-AUGMENTED_PARQUET_PATH = Path("emotion_translation_augmented_filtered.parquet")
+AUGMENTED_PARQUET_URL = (
+    "https://huggingface.co/datasets/emotions-entailment/zero-shot-emotions-mt/resolve/main/"
+    "emotion_translation_augmented_filtered.parquet"
+)
 
 
 def local_path_from_url(url: str) -> Path:
@@ -37,6 +40,7 @@ def local_path_from_url(url: str) -> Path:
 LOCAL_EMOTIONS_PARQUET = local_path_from_url(EMOTIONS_PARQUET_URL)
 LOCAL_URGENCY_PARQUET = local_path_from_url(URGENCY_PARQUET_URL)
 LOCAL_ARXIV_PARQUET = local_path_from_url(ARXIV_PARQUET_URL)
+LOCAL_AUGMENTED_PARQUET = local_path_from_url(AUGMENTED_PARQUET_URL)
 
 
 # %%
@@ -711,7 +715,7 @@ chosen_decay_fn = make_decay_formula(
 )
 
 # Pull in any translated/augmented rows before the final decay pass.
-augmented_df = load_local_augmented_frame(AUGMENTED_PARQUET_PATH)
+augmented_df = load_parquet_frame(LOCAL_AUGMENTED_PARQUET, AUGMENTED_PARQUET_URL)
 if not augmented_df.empty:
     required_columns = {"text", "emotion_vector"}
     missing_columns = required_columns - set(augmented_df.columns)
@@ -723,7 +727,7 @@ if not augmented_df.empty:
     all_df = pd.concat([all_df, augmented_df], ignore_index=True, sort=False)
     print(
         f"Appended {len(augmented_df):,} augmented rows from "
-        f"{AUGMENTED_PARQUET_PATH}."
+        f"{LOCAL_AUGMENTED_PARQUET}."
     )
 
 # Extract original emotion vectors from all_df
