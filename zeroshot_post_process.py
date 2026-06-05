@@ -579,7 +579,7 @@ all_df = pd.concat([emotions_df, urgency_df, arxiv_df])
 # %%
 # Pull in any translated/augmented rows before the final decay pass.
 augmented_df = load_parquet_frame(LOCAL_AUGMENTED_PARQUET, AUGMENTED_PARQUET_URL)
-full_df = pd.concat([all_df, augmented_df])
+full_df = pd.concat([all_df, augmented_df]) if False else all_df
 
 # %%
 # Baseline analysis (original scores)
