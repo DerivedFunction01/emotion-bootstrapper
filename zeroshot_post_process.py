@@ -27,7 +27,7 @@ ARXIV_PARQUET_URL = (
 )
 
 OUTPUT_PATH = Path("emotions_decayed_samples.parquet")
-AUGMENTED_PARQUET_PATH = Path("emotion_translation_augmented.parquet")
+AUGMENTED_PARQUET_PATH = Path("emotion_translation_augmented_filtered.parquet")
 
 
 def local_path_from_url(url: str) -> Path:
