@@ -1,4 +1,4 @@
-#%%
+# %%
 from __future__ import annotations
 
 import math
@@ -34,7 +34,7 @@ DEFAULT_OUTPUT_PATH = Path("emotion_translation_augmented.parquet")
 DEFAULT_TEMP_DIR = Path("emotion_translation_augmented_tmp")
 DEFAULT_SERVER_REGISTRY = Path("translation_server_cluster.json")
 DEFAULT_CHECKPOINT_PATH = DEFAULT_TEMP_DIR / "checkpoint.json"
-DEFAULT_SAMPLE_FRACTION = 0.10
+DEFAULT_SAMPLE_FRACTION = 0.05
 DEFAULT_BATCH_SIZE = 16
 DEFAULT_FLUSH_EVERY = 2000
 
@@ -71,7 +71,7 @@ TARGET_LANGUAGES = {
     "hebrew": "heb_Hebr",
 }
 
-#%%
+# %%
 def local_path_from_url(url: str) -> Path:
     return Path(Path(urlparse(url).path).name)
 
@@ -171,11 +171,10 @@ def _translate_batch_via_server(
         raise ValueError(f"Translation server {server.name} returned an invalid response: {response}")
     return [str(text) for text in translations]
 
-
 def augment_dataframe_with_translations(
     df: pd.DataFrame,
     source_name: str,
-    servers: list[TranslationServer],
+    servers: list,
     *,
     sample_fraction: float,
     batch_size: int,
@@ -187,34 +186,63 @@ def augment_dataframe_with_translations(
     if "text" not in df.columns:
         raise KeyError(f"{source_name} is missing required 'text' column")
 
+    # 1. Calculate step size per language
     sample_size = max(1, math.ceil(len(df) * sample_fraction))
-    sampled_df = df.sample(n=sample_size, random_state=42).reset_index(drop=True)
+    total_rows = len(df)
 
-    texts = sampled_df["text"].astype(str).tolist()
-    row_records = sampled_df.to_dict(orient="records")
     chunk_paths: list[Path] = []
     pending_rows: list[dict] = []
     temp_dir.mkdir(parents=True, exist_ok=True)
 
-    total_translations = len(texts) * len(TARGET_LANGUAGES)
+    # Calculate total expected progress based on variable slices
+    total_translations = sample_size * len(TARGET_LANGUAGES)
     server_cycle = list(servers)
     if not server_cycle:
         raise ValueError("No translation servers available")
     max_workers = _worker_count_for_servers(len(server_cycle))
+
     with tqdm(total=total_translations, desc=f"{source_name} translations") as progress:
-        for target_name, target_lang in TARGET_LANGUAGES.items():
+        # Enumerate languages so we can track our sliding position
+        for lang_idx, (target_name, target_lang) in enumerate(TARGET_LANGUAGES.items()):
             if target_name in completed_languages:
                 print(
                     f"Skipping {source_name}: {target_name} already completed in checkpoint."
                 )
-                progress.update(len(texts))
+                progress.update(sample_size)
                 continue
-            print(f"Translating {source_name}: {target_name} ({target_lang})")
+
+            # 2. Dynamic Sliding Window with Wraparound
+            start_idx = (lang_idx * sample_size) % total_rows
+            end_idx = start_idx + sample_size
+
+            if end_idx <= total_rows:
+                # Normal slice fits within boundaries
+                sampled_df = df.iloc[start_idx:end_idx].reset_index(drop=True)
+            else:
+                # Wraparound slice: take till the end, then wrap to the beginning
+                part1 = df.iloc[start_idx:total_rows]
+                part2 = df.iloc[0 : (end_idx % total_rows)]
+                sampled_df = pd.concat([part1, part2], ignore_index=True)
+
+            print(
+                f"Translating {source_name}: {target_name} ({target_lang}) | Rows {start_idx} to {(end_idx - 1) % total_rows}"
+            )
+
+            # Extract lists specific to this language's unique sample slice
+            texts = sampled_df["text"].astype(str).tolist()
+            row_records = sampled_df.to_dict(orient="records")
+
             batches = list(batch_iterable(texts, batch_size))
+
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_meta = {}
                 for batch_index, batch_texts in enumerate(
-                    tqdm(batches, total=math.ceil(len(texts) / batch_size), desc=f"{source_name}->{target_name}", leave=False)
+                    tqdm(
+                        batches,
+                        total=math.ceil(len(texts) / batch_size),
+                        desc=f"{source_name}->{target_name}",
+                        leave=False,
+                    )
                 ):
                     server = server_cycle[batch_index % len(server_cycle)]
                     future = executor.submit(
@@ -231,11 +259,18 @@ def augment_dataframe_with_translations(
                 for future in as_completed(future_to_meta):
                     batch_index, batch_texts = future_to_meta[future]
                     ordered_results[batch_index] = future.result()
+
                     while next_batch_index in ordered_results:
                         translated_texts = ordered_results.pop(next_batch_index)
+
+                        # Grab rows matching this specific batch from our current dynamic sample
                         batch_rows = row_records[
-                            next_batch_index * batch_size : next_batch_index * batch_size + len(translated_texts)
+                            next_batch_index
+                            * batch_size : next_batch_index
+                            * batch_size
+                            + len(translated_texts)
                         ]
+
                         for row, translated_text in zip(batch_rows, translated_texts):
                             augmented_row = dict(row)
                             augmented_row["text"] = translated_text
@@ -245,15 +280,21 @@ def augment_dataframe_with_translations(
                             augmented_row["translation_source_text"] = row["text"]
                             augmented_row["is_translation"] = True
                             pending_rows.append(augmented_row)
+
                             if len(pending_rows) >= flush_every:
                                 chunk_path = temp_dir / (
                                     f"{source_name}_{target_name}_chunk_{len(chunk_paths):05d}.parquet"
                                 )
-                                pd.DataFrame(pending_rows).to_parquet(chunk_path, index=False)
+                                pd.DataFrame(pending_rows).to_parquet(
+                                    chunk_path, index=False
+                                )
                                 chunk_paths.append(chunk_path)
                                 pending_rows.clear()
+
                         progress.update(len(translated_texts))
                         next_batch_index += 1
+
+            # Ensure we flush remaining rows *per language* so chunks don't leak language to language
             if pending_rows:
                 chunk_path = temp_dir / (
                     f"{source_name}_{target_name}_chunk_{len(chunk_paths):05d}.parquet"
@@ -261,6 +302,7 @@ def augment_dataframe_with_translations(
                 pd.DataFrame(pending_rows).to_parquet(chunk_path, index=False)
                 chunk_paths.append(chunk_path)
                 pending_rows.clear()
+
             completed_languages.add(target_name)
 
     return chunk_paths
@@ -323,5 +365,5 @@ def build_augmented_dataset(
     print(f"Saved augmented parquet to {output_path}")
     return pd.read_parquet(output_path)
 
-#%%
+# %%
 build_augmented_dataset(DEFAULT_OUTPUT_PATH)
