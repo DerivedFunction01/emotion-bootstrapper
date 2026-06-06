@@ -34,7 +34,6 @@ DEFAULT_OUTPUT_PATH = Path("emotion_translation_augmented.parquet")
 DEFAULT_TEMP_DIR = Path("emotion_translation_augmented_tmp")
 DEFAULT_SERVER_REGISTRY = Path("translation_server_cluster.json")
 DEFAULT_CHECKPOINT_PATH = DEFAULT_TEMP_DIR / "checkpoint.json"
-DEFAULT_SAMPLE_FRACTION = 0.05
 DEFAULT_BATCH_SIZE = 16
 DEFAULT_FLUSH_EVERY = 2000
 
@@ -56,21 +55,10 @@ TARGET_LANGUAGES = {
     "hindi": "hin_Deva",
     "portuguese": "por_Latn",
     "korean": "kor_Hang",
-    "turkish": "tur_Latn",
-    "dutch": "nld_Latn",
-    "polish": "pol_Latn",
-    "ukranian": "ukr_Cyrl",
-    "danish": "dan_Latn",
-    "swedish": "swe_Latn",
-    "finnish": "fin_Latn",
-    "norwegian": "nor_Latn",
-    "vietnamese": "vie_Latn",
-    "swahili": "swh_Latn",
-    "thai": "tha_Thai",
-    "greek": "ell_Grek",
-    "hebrew": "heb_Hebr",
     "english": "eng_Latn",
 }
+
+DEFAULT_SAMPLE_FRACTION = 1 / len(TARGET_LANGUAGES)
 
 # %%
 def local_path_from_url(url: str) -> Path:
