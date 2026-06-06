@@ -28,7 +28,7 @@ ARXIV_PARQUET_URL = (
 
 OUTPUT_PATH = Path("emotions_decayed_samples.parquet")
 AUGMENTED_PARQUET_URL = (
-    "https://huggingface.co/datasets/emotions-entailment/zero-shot-emotions-mt/resolve/main/"
+    "https://huggingface.co/datasets/emotions-entailment/zero-shot-emotions-multi-lingual/resolve/main/"
     "emotion_translation_augmented_filtered.parquet"
 )
 
@@ -579,7 +579,7 @@ all_df = pd.concat([emotions_df, urgency_df, arxiv_df])
 # %%
 # Toggle if using the machine translated multilingual one
 augmented_df = load_parquet_frame(LOCAL_AUGMENTED_PARQUET, AUGMENTED_PARQUET_URL)
-full_df = augmented_df if False else all_df
+full_df = augmented_df if True else all_df
 
 # %%
 # Baseline analysis (original scores)
