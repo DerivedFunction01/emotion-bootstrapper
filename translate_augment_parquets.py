@@ -69,6 +69,7 @@ TARGET_LANGUAGES = {
     "thai": "tha_Thai",
     "greek": "ell_Grek",
     "hebrew": "heb_Hebr",
+    "english": "eng_Latn",
 }
 
 # %%
