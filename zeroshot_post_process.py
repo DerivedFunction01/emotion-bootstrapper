@@ -748,9 +748,9 @@ decayed_df.head()
 plot_emotion_correlation_heatmap(all_df)
 plot_emotion_correlation_heatmap(decayed_df)
 # %%
-decayed_df.to_parquet("emotions_decayed_multilingual_8-4-1.25-85-65-75.parquet")
+decayed_df.to_parquet("emotions_decayed_8-4-1.25-85-65-75.parquet")
 
 # %%
-full_df[["text", "emotion_vector"]].to_parquet("emotions_multilingual.parquet")
+full_df[["text", "emotion_vector"]].to_parquet("emotions.parquet")
 
 # %%
