@@ -34,7 +34,7 @@ DEFAULT_OUTPUT_PATH = Path("emotion_translation_augmented.parquet")
 DEFAULT_TEMP_DIR = Path("emotion_translation_augmented_tmp")
 DEFAULT_SERVER_REGISTRY = Path("translation_server_cluster.json")
 DEFAULT_CHECKPOINT_PATH = DEFAULT_TEMP_DIR / "checkpoint.json"
-DEFAULT_BATCH_SIZE = 24
+DEFAULT_BATCH_SIZE = 32
 DEFAULT_FLUSH_EVERY = 2000
 
 SOURCE_PARQUETS = {
