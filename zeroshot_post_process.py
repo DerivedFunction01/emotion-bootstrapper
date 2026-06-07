@@ -657,7 +657,7 @@ analyze_emotion_dataframe(emotions_df, "Emotions Dataset")
 analyze_emotion_dataframe(urgency_df, "Urgency Dataset")
 # %%
 analyze_emotion_dataframe(arxiv_df, "Arxiv Dataset")
-#%%
+# %%
 analyze_emotion_dataframe(augmented_df, "Augmented Datasets")
 # %%
 # Decay-aware analysis (use this to reduce entailment noise)
@@ -798,8 +798,43 @@ decayed_df = decayed_df.sample(frac=1, random_state=42).reset_index(drop=True)
 decayed_df.to_parquet("emotions_decayed_8-4-1.25-85-65-75.parquet")
 
 # %%
-# Shuffle it
-full_df = full_df.sample(frac=1, random_state=42).reset_index(drop=True)
-full_df[["text", "emotion_vector"]].to_parquet("emotions.parquet")
+# For the full one only apply the emotion penalty
+full_config = DecayConfig(
+    start_penalty=0,
+    increment=0,
+    post_rank_3_multiplier=1,
+    top_score_threshold=None,
+    score_threshold=None,
+    penalty_multiplier=1,
+    low_score_threshold=0.35,
+    emotion_penalty=0.10,
+    emotion_threshold=0.50,
+)
+
+# Apply it
+original_vectors = extract_emotions(full_df)
+filtered_vectors_final = apply_decay_and_threshold_penalty_to_dataset(
+    original_vectors,
+    decay_fn=make_decay_formula(
+        start_penalty=full_config.start_penalty,
+        increment=full_config.increment,
+        post_rank_3_multiplier=full_config.post_rank_3_multiplier,
+    ),
+    threshold=full_config.threshold,
+    penalty_multiplier=full_config.penalty_multiplier,
+    low_score_threshold=full_config.low_score_threshold,
+    emotion_penalty=full_config.emotion_penalty,
+    emotion_threshold=full_config.emotion_threshold,
+)
+
+full_filtered_df = pd.DataFrame(
+    {"text": full_df["text"].tolist(), "emotion_vector": filtered_vectors_final}
+)
+
+full_filtered_df.head()
+# %%
+# Shuffle before saving
+full_filtered_df = full_filtered_df.sample(frac=1, random_state=42).reset_index(drop=True)
+full_filtered_df.to_parquet("emotions_mt.parquet")
 
 # %%
