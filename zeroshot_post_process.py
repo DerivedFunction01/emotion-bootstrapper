@@ -748,9 +748,13 @@ decayed_df.head()
 plot_emotion_correlation_heatmap(all_df)
 plot_emotion_correlation_heatmap(decayed_df)
 # %%
+# Shuffle it before saving
+decayed_df = decayed_df.sample(frac=1, random_state=42).reset_index(drop=True)
 decayed_df.to_parquet("emotions_decayed_8-4-1.25-85-65-75.parquet")
 
 # %%
+# Shuffle it
+full_df = full_df.sample(frac=1, random_state=42).reset_index(drop=True)
 full_df[["text", "emotion_vector"]].to_parquet("emotions.parquet")
 
 # %%
