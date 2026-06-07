@@ -108,4 +108,10 @@ If you want to keep the output in a different work folder to avoid collisions wi
   --batch-size 8
 ```
 
+```bash
+.venv/bin/python run_bootstrap.py \
+  --cache-zip ./mt_emotions_multilingual.zip \
+  --work-dir ./bootstrap_work_mt \
+  --batch-size 8
+```
 If you want to point at a different registry file, pass `--server-registry`.
