@@ -73,6 +73,7 @@ def filter_translated_rows(df: pd.DataFrame) -> pd.DataFrame:
     work = work.drop_duplicates(subset=["text", "translation_language_code"], keep="first")
     after = len(work)
     print(f"Filtered {before - after:,} row(s); kept {after:,}.")
+    work = work.sample(frac=1, random_state=42)
     return work.reset_index(drop=True)
 
 
