@@ -51,6 +51,24 @@ Notes:
 
 If your dataset is already preprocessed and you only want to change the source text, keep the same cache schema and just swap the `--dataset-path` / `--dataset-config` / `--text-column` values.
 
+**Using the Multilingual Model**
+You can run the bootstrapper in multilingual mode, which natively uses `MoritzLaurer/mDeBERTa-v3-base-mnli-xnli` and automatically maps the text to correctly translated semantic hypotheses.
+
+First, build the cache using the `--multilingual` flag:
+
+```bash
+.venv/bin/python build_cache.py \
+  --dataset-path DerivedFunction01/dair-ai_emotions_sample \
+  --multilingual \
+  --zip-path ./emotion_cache_multilingual.zip
+```
+
+Then, start the server cluster using the `--multilingual` flag so it serves the matching weights:
+
+```bash
+.venv/bin/python server_manager.py start --multilingual
+```
+
 **Start the server cluster**
 This auto-detects the available CUDA GPUs and starts one server per GPU:
 

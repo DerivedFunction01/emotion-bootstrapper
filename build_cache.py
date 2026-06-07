@@ -21,7 +21,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--text-column", default="text")
     parser.add_argument("--cache-dir", default="./emotion_cache")
     parser.add_argument("--zip-path", default="./emotion_cache.zip")
-    parser.add_argument("--model", default="facebook/bart-large-mnli")
+    parser.add_argument("--model", default=None)
+    parser.add_argument("--multilingual", action="store_true", help="Use the multilingual model and hypotheses.")
     parser.add_argument("--num-proc", type=int, default=None)
     parser.add_argument("--tokenize-batch-size", type=int, default=1000)
     return parser.parse_args()
@@ -74,7 +75,7 @@ def main() -> None:
         else next(iter(dataset_dict.values()))
     )
 
-    bootstrapper = VerboseSemanticBootstrapper(model=args.model)
+    bootstrapper = VerboseSemanticBootstrapper(model=args.model, multilingual=args.multilingual)
     tokenized = bootstrapper.tokenize_dataset(
         dataset,
         text_column=args.text_column,
@@ -114,8 +115,9 @@ def main() -> None:
             "dataset_path": args.dataset_path,
             "dataset_config": args.dataset_config,
             "text_column": args.text_column,
-            "model": args.model,
-            "num_emotions": len(SEMANTIC_HYPOTHESES),
+            "model": args.model or ("MoritzLaurer/mDeBERTa-v3-base-mnli-xnli" if args.multilingual else "facebook/bart-large-mnli"),
+            "multilingual": args.multilingual,
+            "num_emotions": len(bootstrapper.hypotheses),
             "num_rows": len(dataset),
             "num_hypotheses": num_hypotheses,
             "kept_columns": keep_columns,
