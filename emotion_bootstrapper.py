@@ -268,8 +268,11 @@ class VerboseSemanticBootstrapper:
     """
 
     def __init__(
-        self, model: str = "facebook/bart-large-mnli", device_map: str = "auto"
+        self, model: str | None = None, device_map: str = "auto", multilingual: bool = False
     ):
+        self.multilingual = multilingual
+        if model is None:
+            model = "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli" if multilingual else "facebook/bart-large-mnli"
         print(f"Loading model/tokenizer: {model}")
         self.tokenizer = AutoTokenizer.from_pretrained(model)
         self.model = AutoModelForSequenceClassification.from_pretrained(model)
@@ -278,8 +281,12 @@ class VerboseSemanticBootstrapper:
         )
         self.model.to(self.device)
         self.model.eval()
-        self.emotion_labels = list(SEMANTIC_HYPOTHESES.keys())
-        self.hypotheses = list(SEMANTIC_HYPOTHESES.values())
+        if self.multilingual:
+            self.emotion_labels = list(SEMANTIC_HYPOTHESES_MULTILINGUAL["english"].keys())
+            self.hypotheses = list(SEMANTIC_HYPOTHESES_MULTILINGUAL["english"].values())
+        else:
+            self.emotion_labels = list(SEMANTIC_HYPOTHESES.keys())
+            self.hypotheses = list(SEMANTIC_HYPOTHESES.values())
         self.entailment_id = self._find_entailment_id()
 
     def _find_entailment_id(self) -> int:
@@ -296,6 +303,11 @@ class VerboseSemanticBootstrapper:
         self, batch: Dict[str, List[str]], indices: List[int], text_column: str
     ) -> Dict[str, List]:
         texts = batch[text_column]
+        if self.multilingual and "translation_language" in batch:
+            languages = batch["translation_language"]
+        else:
+            languages = ["english"] * len(texts)
+
         input_texts = []
         hypotheses = []
         text_indices = []
@@ -303,7 +315,13 @@ class VerboseSemanticBootstrapper:
 
         for text_index, text in enumerate(texts):
             global_text_index = int(indices[text_index])
-            for label_index, hypothesis in enumerate(self.hypotheses):
+            lang = str(languages[text_index]).lower()
+            if self.multilingual and lang in SEMANTIC_HYPOTHESES_MULTILINGUAL:
+                current_hypotheses = list(SEMANTIC_HYPOTHESES_MULTILINGUAL[lang].values())
+            else:
+                current_hypotheses = self.hypotheses
+
+            for label_index, hypothesis in enumerate(current_hypotheses):
                 input_texts.append(text)
                 hypotheses.append(hypothesis)
                 text_indices.append(global_text_index)
