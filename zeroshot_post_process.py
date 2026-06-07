@@ -28,7 +28,7 @@ ARXIV_PARQUET_URL = (
 
 OUTPUT_PATH = Path("emotions_decayed_samples.parquet")
 AUGMENTED_PARQUET_URL = (
-    "https://huggingface.co/datasets/emotions-entailment/zero-shot-emotions-mt/resolve/main/"
+    "https://huggingface.co/datasets/DerivedFunction01/mt-emotions-raw/resolve/main/"
     "emotion_mdeberta.parquet"
 )
 
