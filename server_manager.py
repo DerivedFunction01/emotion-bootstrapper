@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
         help="Select which server configuration to manage.",
     )
     parser.add_argument("--model", default=None)
+    parser.add_argument("--multilingual", action="store_true", help="Start the bootstrap server with multilingual hypotheses.")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument(
         "--num-servers",
@@ -80,8 +81,10 @@ def _pid_file(pid_dir: Path, device_id: int) -> Path:
     return pid_dir / f"server_{device_id}.pid"
 
 
-def _default_model_for_config(config: str) -> str:
+def _default_model_for_config(config: str, multilingual: bool = False) -> str:
     if config == "bootstrap":
+        if multilingual:
+            return "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli"
         return "facebook/bart-large-mnli"
     if config == "translate":
         return "facebook/nllb-200-distilled-600M"
@@ -121,7 +124,7 @@ def start_servers(args: argparse.Namespace) -> None:
     pid_dir = Path(args.pid_dir)
     pid_dir.mkdir(parents=True, exist_ok=True)
     server_count = _detect_server_count(args)
-    model = args.model or _default_model_for_config(args.config)
+    model = args.model or _default_model_for_config(args.config, args.multilingual)
     registry_path = Path(args.registry_path) if args.registry_path else _default_registry_path_for_config(args.config)
     server_script = _server_script_for_config(args.config)
 
@@ -148,6 +151,8 @@ def start_servers(args: argparse.Namespace) -> None:
             "--model",
             model,
         ]
+        if args.config == "bootstrap" and args.multilingual:
+            cmd.append("--multilingual")
         proc = subprocess.Popen(cmd, env=env)
         pid_file.write_text(str(proc.pid), encoding="utf-8")
         specs.append(
@@ -166,6 +171,7 @@ def start_servers(args: argparse.Namespace) -> None:
         registry_path,
         {
             "config": args.config,
+            "multilingual": getattr(args, "multilingual", False),
             "model": model,
             "host": args.host,
             "port_base": args.port_base,
@@ -212,6 +218,8 @@ def status(args: argparse.Namespace) -> None:
     registry = _read_registry(registry_path)
     print(f"Config: {registry.get('config', args.config)}")
     print(f"Model: {registry.get('model')}")
+    if registry.get("multilingual"):
+        print("Multilingual: True")
     for server in registry.get("servers", []):
         print(f"{server['name']}: {server['url']} pid={server['pid']}")
 
