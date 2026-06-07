@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
@@ -260,6 +261,9 @@ def apply_threshold_penalty_to_vector(
     vector: dict[str, float],
     threshold: float,
     penalty_multiplier: float,
+    low_score_threshold: float | None = None,
+    emotion_penalty: float = 1.0,
+    emotion_threshold: float | None = None,
     *,
     exclude_emotion: bool = True,
 ) -> dict[str, float]:
@@ -281,7 +285,14 @@ def apply_threshold_penalty_to_vector(
         }
 
     if emotion_gate is not None:
-        penalized["emotion"] = emotion_gate
+        if (
+            low_score_threshold is not None
+            and top_score < low_score_threshold
+            and (emotion_threshold is None or emotion_gate >= emotion_threshold)
+        ):
+            penalized["emotion"] = emotion_gate * emotion_penalty
+        else:
+            penalized["emotion"] = emotion_gate
     return penalized
 
 
@@ -290,6 +301,9 @@ def apply_gate_below_threshold_penalty_to_vector(
     top_score_threshold: float,
     score_threshold: float,
     penalty_multiplier: float,
+    low_score_threshold: float | None = None,
+    emotion_penalty: float = 1.0,
+    emotion_threshold: float | None = None,
     *,
     exclude_emotion: bool = True,
 ) -> dict[str, float]:
@@ -313,15 +327,30 @@ def apply_gate_below_threshold_penalty_to_vector(
         }
 
     if emotion_gate is not None:
-        penalized["emotion"] = emotion_gate
+        if (
+            low_score_threshold is not None
+            and top_score < low_score_threshold
+            and (emotion_threshold is None or emotion_gate >= emotion_threshold)
+        ):
+            penalized["emotion"] = emotion_gate * emotion_penalty
+        else:
+            penalized["emotion"] = emotion_gate
     return penalized
 
 
 def apply_threshold_penalty_to_dataset(
-    vectors: list[dict], threshold: float, penalty_multiplier: float
+    vectors: list[dict], 
+    threshold: float, 
+    penalty_multiplier: float,
+    low_score_threshold: float | None = None,
+    emotion_penalty: float = 1.0,
+    emotion_threshold: float | None = None,
 ) -> list[dict]:
     return [
-        apply_threshold_penalty_to_vector(vector, threshold, penalty_multiplier)
+        apply_threshold_penalty_to_vector(
+            vector, threshold, penalty_multiplier, low_score_threshold, 
+            emotion_penalty, emotion_threshold
+        )
         for vector in vectors
     ]
 
@@ -331,6 +360,9 @@ def apply_gate_below_threshold_penalty_to_dataset(
     top_score_threshold: float,
     score_threshold: float,
     penalty_multiplier: float,
+    low_score_threshold: float | None = None,
+    emotion_penalty: float = 1.0,
+    emotion_threshold: float | None = None,
 ) -> list[dict]:
     return [
         apply_gate_below_threshold_penalty_to_vector(
@@ -338,6 +370,9 @@ def apply_gate_below_threshold_penalty_to_dataset(
             top_score_threshold,
             score_threshold,
             penalty_multiplier,
+            low_score_threshold,
+            emotion_penalty,
+            emotion_threshold,
         )
         for vector in vectors
     ]
@@ -348,11 +383,17 @@ def apply_decay_and_threshold_penalty_to_vector(
     decay_fn: Callable[[int], float],
     threshold: float | None = None,
     penalty_multiplier: float = 1.0,
+    low_score_threshold: float | None = None,
+    emotion_penalty: float = 1.0,
+    emotion_threshold: float | None = None,
 ) -> dict[str, float]:
     decayed = apply_decay_to_vector(vector, decay_fn)
     if threshold is None:
         return decayed
-    return apply_threshold_penalty_to_vector(decayed, threshold, penalty_multiplier)
+    return apply_threshold_penalty_to_vector(
+        decayed, threshold, penalty_multiplier, low_score_threshold, 
+        emotion_penalty, emotion_threshold
+    )
 
 
 def apply_decay_and_threshold_penalty_to_dataset(
@@ -360,10 +401,15 @@ def apply_decay_and_threshold_penalty_to_dataset(
     decay_fn: Callable[[int], float],
     threshold: float | None = None,
     penalty_multiplier: float = 1.0,
+    low_score_threshold: float | None = None,
+    emotion_penalty: float = 1.0,
+    emotion_threshold: float | None = None,
 ) -> list[dict]:
     return [
         apply_decay_and_threshold_penalty_to_vector(
-            vector, decay_fn, threshold=threshold, penalty_multiplier=penalty_multiplier
+            vector, decay_fn, threshold=threshold, penalty_multiplier=penalty_multiplier,
+            low_score_threshold=low_score_threshold, emotion_penalty=emotion_penalty,
+            emotion_threshold=emotion_threshold
         )
         for vector in vectors
     ]
@@ -375,6 +421,9 @@ def apply_decay_and_gate_below_threshold_penalty_to_dataset(
     top_score_threshold: float,
     score_threshold: float,
     penalty_multiplier: float,
+    low_score_threshold: float | None = None,
+    emotion_penalty: float = 1.0,
+    emotion_threshold: float | None = None,
 ) -> list[dict]:
     return [
         apply_gate_below_threshold_penalty_to_vector(
@@ -382,6 +431,9 @@ def apply_decay_and_gate_below_threshold_penalty_to_dataset(
             top_score_threshold,
             score_threshold,
             penalty_multiplier,
+            low_score_threshold,
+            emotion_penalty,
+            emotion_threshold,
         )
         for vector in vectors
     ]
@@ -450,6 +502,20 @@ def compute_rank_stats(
     }
 
 
+@dataclass(frozen=True)
+class DecayConfig:
+    start_penalty: float
+    increment: float
+    post_rank_3_multiplier: float = 1.0
+    threshold: float | None = None
+    top_score_threshold: float | None = None
+    score_threshold: float | None = None
+    penalty_multiplier: float = 1.0
+    low_score_threshold: float | None = None
+    emotion_penalty: float = 1.0
+    emotion_threshold: float | None = None
+
+
 # %%
 def analyze_emotion_dataframe(df: pd.DataFrame, dataset_name: str):
     vectors = extract_emotions(df)
@@ -469,48 +535,50 @@ def analyze_emotion_dataframe(df: pd.DataFrame, dataset_name: str):
 def analyze_decayed_emotion_dataframe(
     df: pd.DataFrame,
     dataset_name: str,
-    *,
-    start_penalty: float = 10.0,
-    increment: float = 5.0,
-    post_rank_3_multiplier: float = 1.0,
-    threshold: float | None = None,
-    penalty_multiplier: float = 1.0,
-    top_score_threshold: float | None = None,
-    score_threshold: float | None = None,
+    config: DecayConfig,
 ) -> tuple[dict, dict, dict]:
     """Apply the decay formula to the dataset and print the decayed summary."""
     # Print out what values are used
     print("\n\n" + "=" * 80)
     print("Decay formula:")
     print("-" * 80)
-    print("Start penalty:", start_penalty)
-    print("Increment:", increment)
-    print("Post-rank 3 multiplier:", post_rank_3_multiplier)
-    print("Threshold:", threshold)
-    print("Penalty multiplier:", penalty_multiplier)
-    print("Top score threshold:", top_score_threshold)
-    print("Score threshold:", score_threshold)
+    print("Start penalty:", config.start_penalty)
+    print("Increment:", config.increment)
+    print("Post-rank 3 multiplier:", config.post_rank_3_multiplier)
+    print("Threshold:", config.threshold)
+    print("Penalty multiplier:", config.penalty_multiplier)
+    print("Top score threshold:", config.top_score_threshold)
+    print("Score threshold:", config.score_threshold)
+    print("Low score threshold:", config.low_score_threshold)
+    print("Emotion penalty:", config.emotion_penalty)
+    print("Emotion threshold:", config.emotion_threshold)
     print("-" * 80 + "\n")
     vectors = extract_emotions(df)
     decay_fn = make_decay_formula(
-        start_penalty=start_penalty,
-        increment=increment,
-        post_rank_3_multiplier=post_rank_3_multiplier,
+        start_penalty=config.start_penalty,
+        increment=config.increment,
+        post_rank_3_multiplier=config.post_rank_3_multiplier,
     )
-    if top_score_threshold is not None and score_threshold is not None:
+    if config.top_score_threshold is not None and config.score_threshold is not None:
         decayed_vectors = apply_decay_and_gate_below_threshold_penalty_to_dataset(
             vectors,
             decay_fn,
-            top_score_threshold=top_score_threshold,
-            score_threshold=score_threshold,
-            penalty_multiplier=penalty_multiplier,
+            top_score_threshold=config.top_score_threshold,
+            score_threshold=config.score_threshold,
+            penalty_multiplier=config.penalty_multiplier,
+            low_score_threshold=config.low_score_threshold,
+            emotion_penalty=config.emotion_penalty,
+            emotion_threshold=config.emotion_threshold,
         )
     else:
         decayed_vectors = apply_decay_and_threshold_penalty_to_dataset(
             vectors,
             decay_fn,
-            threshold=threshold,
-            penalty_multiplier=penalty_multiplier,
+            threshold=config.threshold,
+            penalty_multiplier=config.penalty_multiplier,
+            low_score_threshold=config.low_score_threshold,
+            emotion_penalty=config.emotion_penalty,
+            emotion_threshold=config.emotion_threshold,
         )
 
     print("\nSample of the decay effect (first row):")
@@ -594,24 +662,24 @@ analyze_emotion_dataframe(augmented_df, "Augmented Datasets")
 # %%
 # Decay-aware analysis (use this to reduce entailment noise)
 DECAY_CONFIGS = [
-    (5, 2.5, 2),
-    (10.0, 5.0, 1.25),
-    (8.0, 4.0, 1.25),
-    (12.0, 6.0, 1.30),
+    DecayConfig(5.0, 2.5, 2.0),
+    DecayConfig(10.0, 5.0, 1.25),
+    DecayConfig(8.0, 4.0, 1.25),
+    DecayConfig(12.0, 6.0, 1.30),
 ]
 
 THRESHOLD_DECAY_CONFIGS = [
-    (8.0, 4.0, 1.10, 0.65, 0.70),
-    (10.0, 5.0, 1.25, 0.65, 0.70),
-    (8.0, 4.0, 1.10, 0.65, 0.75),
-    (10.0, 5.0, 1.25, 0.65, 0.75),
+    DecayConfig(8.0, 4.0, 1.10, threshold=0.65, penalty_multiplier=0.70, low_score_threshold=0.50, emotion_penalty=0.75, emotion_threshold=0.50),
+    DecayConfig(10.0, 5.0, 1.25, threshold=0.65, penalty_multiplier=0.70, low_score_threshold=0.50, emotion_penalty=0.75, emotion_threshold=0.50),
+    DecayConfig(8.0, 4.0, 1.10, threshold=0.65, penalty_multiplier=0.75, low_score_threshold=0.50, emotion_penalty=0.75, emotion_threshold=0.50),
+    DecayConfig(10.0, 5.0, 1.25, threshold=0.65, penalty_multiplier=0.75, low_score_threshold=0.50, emotion_penalty=0.75, emotion_threshold=0.50),
 ]
 
 GATED_THRESHOLD_DECAY_CONFIGS = [
-    (8.0, 4.0, 1.10, 0.70, 0.65, 0.85),
-    (10.0, 5.0, 1.25, 0.70, 0.65, 0.85),
-    (8.0, 4.0, 1.10, 0.75, 0.65, 0.85),
-    (10.0, 5.0, 1.25, 0.75, 0.65, 0.85),
+    DecayConfig(8.0, 4.0, 1.10, top_score_threshold=0.70, score_threshold=0.65, penalty_multiplier=0.85, low_score_threshold=0.50, emotion_penalty=0.75, emotion_threshold=0.50),
+    DecayConfig(10.0, 5.0, 1.25, top_score_threshold=0.70, score_threshold=0.65, penalty_multiplier=0.85, low_score_threshold=0.50, emotion_penalty=0.75, emotion_threshold=0.50),
+    DecayConfig(8.0, 4.0, 1.10, top_score_threshold=0.75, score_threshold=0.65, penalty_multiplier=0.85, low_score_threshold=0.50, emotion_penalty=0.75, emotion_threshold=0.50),
+    DecayConfig(10.0, 5.0, 1.25, top_score_threshold=0.75, score_threshold=0.65, penalty_multiplier=0.85, low_score_threshold=0.50, emotion_penalty=0.75, emotion_threshold=0.50),
 ]
 
 # %%
@@ -621,56 +689,27 @@ all_rank_averages = {}
 all_count_distributions = {}
 
 for i, cfg in enumerate(DECAY_CONFIGS):
-    start_penalty, increment, post_rank_3_multiplier = cfg
     print(f"\n--- Analyzing Decay Config {i+1}: {cfg} ---")
     stats, rank_averages, count_distribution = analyze_decayed_emotion_dataframe(
-        all_df,
-        "All Datasets",
-        start_penalty=start_penalty,
-        increment=increment,
-        post_rank_3_multiplier=post_rank_3_multiplier,
+        all_df, "All Datasets", cfg
     )
     all_stats[f"Config {i+1}"] = stats
     all_rank_averages[f"Config {i+1}"] = rank_averages
     all_count_distributions[f"Config {i+1}"] = count_distribution
 
 for i, cfg in enumerate(THRESHOLD_DECAY_CONFIGS):
-    start_penalty, increment, post_rank_3_multiplier, threshold, penalty_multiplier = (
-        cfg
-    )
     print(f"\n--- Analyzing Threshold Decay Config {i+1}: {cfg} ---")
     stats, rank_averages, count_distribution = analyze_decayed_emotion_dataframe(
-        all_df,
-        "All Datasets",
-        start_penalty=start_penalty,
-        increment=increment,
-        post_rank_3_multiplier=post_rank_3_multiplier,
-        threshold=threshold,
-        penalty_multiplier=penalty_multiplier,
+        all_df, "All Datasets", cfg
     )
     all_stats[f"Threshold Config {i+1}"] = stats
     all_rank_averages[f"Threshold Config {i+1}"] = rank_averages
     all_count_distributions[f"Threshold Config {i+1}"] = count_distribution
 
 for i, cfg in enumerate(GATED_THRESHOLD_DECAY_CONFIGS):
-    (
-        start_penalty,
-        increment,
-        post_rank_3_multiplier,
-        top_score_threshold,
-        score_threshold,
-        penalty_multiplier,
-    ) = cfg
     print(f"\n--- Analyzing Gated Threshold Decay Config {i+1}: {cfg} ---")
     stats, rank_averages, count_distribution = analyze_decayed_emotion_dataframe(
-        all_df,
-        "All Datasets",
-        start_penalty=start_penalty,
-        increment=increment,
-        post_rank_3_multiplier=post_rank_3_multiplier,
-        top_score_threshold=top_score_threshold,
-        score_threshold=score_threshold,
-        penalty_multiplier=penalty_multiplier,
+        all_df, "All Datasets", cfg
     )
     all_stats[f"Gated Threshold Config {i+1}"] = stats
     all_rank_averages[f"Gated Threshold Config {i+1}"] = rank_averages
@@ -706,21 +745,23 @@ mean_rank_df.style.background_gradient(cmap="plasma", axis=0)
 
 # %%
 # Define the decay configuration identified as promising
-chosen_decay_config = (8.0, 4.0, 1.25, 0.85, 0.65, 0.75)
-(
-    start_penalty,
-    increment,
-    post_rank_3_multiplier,
-    top_score_threshold,
-    score_threshold,
-    penalty_multiplier,
-) = chosen_decay_config
+chosen_decay_config = DecayConfig(
+    start_penalty=8.0,
+    increment=4.0,
+    post_rank_3_multiplier=1.25,
+    top_score_threshold=0.85,
+    score_threshold=0.65,
+    penalty_multiplier=0.75,
+    low_score_threshold=0.35,
+    emotion_penalty=0.10,
+    emotion_threshold=0.50,
+)
 
 # Create the decay function
 chosen_decay_fn = make_decay_formula(
-    start_penalty=start_penalty,
-    increment=increment,
-    post_rank_3_multiplier=post_rank_3_multiplier,
+    start_penalty=chosen_decay_config.start_penalty,
+    increment=chosen_decay_config.increment,
+    post_rank_3_multiplier=chosen_decay_config.post_rank_3_multiplier,
 )
 # Extract original emotion vectors from all_df
 original_vectors = extract_emotions(full_df)
@@ -729,9 +770,12 @@ original_vectors = extract_emotions(full_df)
 decayed_vectors_final = apply_decay_and_gate_below_threshold_penalty_to_dataset(
     original_vectors,
     chosen_decay_fn,
-    top_score_threshold=top_score_threshold,
-    score_threshold=score_threshold,
-    penalty_multiplier=penalty_multiplier,
+    top_score_threshold=chosen_decay_config.top_score_threshold,
+    score_threshold=chosen_decay_config.score_threshold,
+    penalty_multiplier=chosen_decay_config.penalty_multiplier,
+    low_score_threshold=chosen_decay_config.low_score_threshold,
+    emotion_penalty=chosen_decay_config.emotion_penalty,
+    emotion_threshold=chosen_decay_config.emotion_threshold,
 )
 
 # Create the decayed_df
@@ -741,14 +785,12 @@ decayed_df = pd.DataFrame(
 
 print(
     "Successfully created decayed_df using configuration: "
-    f"decay={chosen_decay_config}, top_score_threshold={top_score_threshold}, "
-    f"score_threshold={score_threshold}, "
-    f"penalty_multiplier={penalty_multiplier}"
+    f"decay={chosen_decay_config}"
 )
 decayed_df.head()
 # %%
 # Call the function with the existing DataFrames
-plot_emotion_correlation_heatmap(all_df)
+plot_emotion_correlation_heatmap(full_df)
 plot_emotion_correlation_heatmap(decayed_df)
 # %%
 # Shuffle it before saving
