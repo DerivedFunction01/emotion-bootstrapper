@@ -805,6 +805,7 @@ full_config = DecayConfig(
     post_rank_3_multiplier=1,
     top_score_threshold=None,
     score_threshold=None,
+    threshold=0.0,
     penalty_multiplier=1,
     low_score_threshold=0.35,
     emotion_penalty=0.10,
