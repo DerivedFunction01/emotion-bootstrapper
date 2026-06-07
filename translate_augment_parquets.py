@@ -44,18 +44,23 @@ SOURCE_PARQUETS = {
 }
 
 TARGET_LANGUAGES = {
+    "english": "eng_Latn",
+    "spanish": "spa_Latn",
+    "portuguese": "por_Latn",
     "french": "fra_Latn",
     "german": "deu_Latn",
-    "spanish": "spa_Latn",
     "italian": "ita_Latn",
     "chinese": "zho_Hans",
     "japanese": "jpn_Jpan",
     "russian": "rus_Cyrl",
     "arabic": "arb_Arab",
     "hindi": "hin_Deva",
-    "portuguese": "por_Latn",
     "korean": "kor_Hang",
-    "english": "eng_Latn",
+    "danish": "dan_Latn",
+    "polish": "pol_Latn",
+    "indonesian": "ind_Latn",
+    "turkish": "tur_Latn",
+    "vietnamese": "vie_Latn",
 }
 
 DEFAULT_SAMPLE_FRACTION = 1 / len(TARGET_LANGUAGES)
