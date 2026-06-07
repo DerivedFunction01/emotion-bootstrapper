@@ -58,9 +58,9 @@ First, build the cache using the `--multilingual` flag:
 
 ```bash
 .venv/bin/python build_cache.py \
-  --dataset-path DerivedFunction01/dair-ai_emotions_sample \
+  --dataset-path DerivedFunction01/mt-emotions \
   --multilingual \
-  --zip-path ./emotion_cache_multilingual.zip
+  --zip-path ./mt_emotions_multilingual.zip
 ```
 
 Then, start the server cluster using the `--multilingual` flag so it serves the matching weights:
