@@ -17,7 +17,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run one emotion bootstrap model server.")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--model", default="facebook/bart-large-mnli")
+    parser.add_argument("--model", default=None)
+    parser.add_argument("--multilingual", action="store_true", help="Use the multilingual model and hypotheses.")
     parser.add_argument(
         "--device-id",
         type=int,
@@ -81,7 +82,7 @@ class EmotionInferenceServer(BaseHTTPRequestHandler):
 def main() -> None:
     args = parse_args()
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
-    bootstrapper = VerboseSemanticBootstrapper(model=args.model, device_map="cpu")
+    bootstrapper = VerboseSemanticBootstrapper(model=args.model, device_map="cpu", multilingual=args.multilingual)
     if torch.cuda.is_available():
         bootstrapper.device = torch.device(f"cuda:{args.device_id}")
         bootstrapper.model.to(bootstrapper.device)
