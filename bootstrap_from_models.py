@@ -268,3 +268,8 @@ print(f"urgency_df shape: {urgency_df.shape}")
 print(f"arxiv_df shape: {arxiv_df.shape}")
 
 # %%
+# Save it
+emotions_df.to_parquet("emotions_df_with_models.parquet")
+urgency_df.to_parquet("urgency_df_with_models.parquet")
+arxiv_df.to_parquet("arxiv_df_with_models.parquet")
+# %%
