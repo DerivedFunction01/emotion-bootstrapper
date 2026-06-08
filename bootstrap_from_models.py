@@ -15,9 +15,10 @@ import pandas as pd
 import requests
 from urllib.parse import urljoin
 import seaborn as sns
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt # Keep this import, even if not directly used in the diff
 from tqdm.auto import tqdm
 from transformers import pipeline
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 tqdm.pandas()
 
@@ -149,7 +150,7 @@ def batch_inference(
     """
     results = []
 
-    for i in tqdm(range(0, len(texts), batch_size), desc="Processing batches"):
+    for i in tqdm(range(0, len(texts), batch_size), desc=f"Processing batches for {model_type}"):
         batch = texts[i : i + batch_size]
 
         # Call the classification server
@@ -213,78 +214,53 @@ except FileNotFoundError as e:
     exit(1)
 
 # ============================================================================
-# BATCH PROCESS EMOTIONS_DF
+# BATCH PROCESS DATAFRAMES CONCURRENTLY
 # ============================================================================
-
-print("\n" + "=" * 60)
-print("Processing emotions_df...")
-print("=" * 60)
 
 batch_size = 32  # Adjust based on your GPU memory (larger = faster but more memory)
 
-emotions_df["emotion_vector_entailment_raw"] = batch_inference(
-    emotions_df["text"].tolist(), entailment_raw_server_url, "roberta-raw", batch_size=batch_size
-)
+def _process_df_with_models(df_name: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Processes a single DataFrame with all three models concurrently."""
+    print(f"\n" + "=" * 60)
+    print(f"Processing {df_name} concurrently with 3 models...")
+    print("=" * 60)
 
-emotions_df["emotion_vector_entailment_decay"] = batch_inference(
-    emotions_df["text"].tolist(), entailment_decay_server_url, "roberta-decay", batch_size=batch_size
-)
+    texts_to_process = df["text"].tolist()
+    
+    # Define tasks for each model
+    tasks = [
+        (entailment_raw_server_url, "roberta-raw", None, "emotion_vector_entailment_raw"),
+        (entailment_decay_server_url, "roberta-decay", None, "emotion_vector_entailment_decay"),
+        (tabularisai_server_url, "tabularisai", remap_tabularisai_to_dict, "emotion_vector_tabularisai"),
+    ]
 
-emotions_df["emotion_vector_tabularisai"] = batch_inference(
-    emotions_df["text"].tolist(),
-    tabularisai_server_url,
-    "tabularisai",
-    batch_size=batch_size,
-    remap_fn=remap_tabularisai_to_dict,
-)
+    results_futures = {}
+    with ThreadPoolExecutor(max_workers=3) as executor: # 3 workers for 3 models
+        for server_url, model_type, remap_fn, column_name in tasks:
+            future = executor.submit(
+                batch_inference,
+                texts_to_process,
+                server_url,
+                model_type,
+                batch_size,
+                remap_fn,
+            )
+            results_futures[future] = column_name
 
-# ============================================================================
-# BATCH PROCESS URGENCY_DF
-# ============================================================================
+        for future in as_completed(results_futures):
+            column_name = results_futures[future]
+            try:
+                df[column_name] = future.result()
+            except Exception as exc:
+                print(f"Error processing {df_name} with model for column {column_name}: {exc}")
+                # Depending on requirements, you might want to re-raise or handle gracefully
+                df[column_name] = [None] * len(df) # Assign None or empty list on failure
+    return df
 
-print("\n" + "=" * 60)
-print("Processing urgency_df...")
-print("=" * 60)
-
-urgency_df["emotion_vector_entailment_raw"] = batch_inference(
-    urgency_df["text"].tolist(), entailment_raw_server_url, "roberta-raw", batch_size=batch_size
-)
-
-urgency_df["emotion_vector_entailment_decay"] = batch_inference(
-    urgency_df["text"].tolist(), entailment_decay_server_url, "roberta-decay", batch_size=batch_size
-)
-
-urgency_df["emotion_vector_tabularisai"] = batch_inference(
-    urgency_df["text"].tolist(),
-    tabularisai_server_url,
-    "tabularisai",
-    batch_size=batch_size,
-    remap_fn=remap_tabularisai_to_dict,
-)
-
-# ============================================================================
-# BATCH PROCESS ARXIV_DF
-# ============================================================================
-
-print("\n" + "=" * 60)
-print("Processing arxiv_df...")
-print("=" * 60)
-
-arxiv_df["emotion_vector_entailment_raw"] = batch_inference(
-    arxiv_df["text"].tolist(), entailment_raw_server_url, "roberta-raw", batch_size=batch_size
-)
-
-arxiv_df["emotion_vector_entailment_decay"] = batch_inference(
-    arxiv_df["text"].tolist(), entailment_decay_server_url, "roberta-decay", batch_size=batch_size
-)
-
-arxiv_df["emotion_vector_tabularisai"] = batch_inference(
-    arxiv_df["text"].tolist(),
-    tabularisai_server_url,
-    "tabularisai",
-    batch_size=batch_size,
-    remap_fn=remap_tabularisai_to_dict,
-)
+# Process each dataframe
+emotions_df = _process_df_with_models("emotions_df", emotions_df)
+urgency_df = _process_df_with_models("urgency_df", urgency_df)
+arxiv_df = _process_df_with_models("arxiv_df", arxiv_df)
 
 print("\nAll DataFrames processed!")
 print(f"emotions_df shape: {emotions_df.shape}")
