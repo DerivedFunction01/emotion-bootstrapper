@@ -121,7 +121,7 @@ def batch_inference(
     texts: list[str],
     server_url: str,
     model_type: str, # e.g., "roberta-raw", "tabularisai"
-    batch_size: int = 32,
+    batch_size: int = 64,
     remap_fn: Callable = None,
     # For Tabularisai, the server returns a list of lists of dicts,
     # where each inner list is the output for one text.
