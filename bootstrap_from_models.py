@@ -235,7 +235,7 @@ def _process_df_with_models(df_name: str, df: pd.DataFrame) -> pd.DataFrame:
     ]
 
     results_futures = {}
-    with ThreadPoolExecutor(max_workers=3) as executor: # 3 workers for 3 models
+    with ThreadPoolExecutor(max_workers=3 * 2) as executor:
         for server_url, model_type, remap_fn, column_name in tasks:
             future = executor.submit(
                 batch_inference,
