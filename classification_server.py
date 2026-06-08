@@ -80,6 +80,8 @@ def main() -> None:
         "text-classification",
         model=args.model,
         top_k=None, # Ensure all scores are returned
+        max_length=512, # Explicitly set max length for truncation
+        truncation=True, # Enable truncation
         device=device,
     )
     print(f"Model {args.model} loaded successfully.")
