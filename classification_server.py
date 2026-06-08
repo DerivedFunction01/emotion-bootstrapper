@@ -59,7 +59,7 @@ class ClassificationInferenceServer(BaseHTTPRequestHandler):
 
         with self.inference_lock:
             # The pipeline handles batching internally when given a list
-            raw_outputs = self.pipeline_instance(texts, top_k=None)
+            raw_outputs = self.pipeline_instance(texts, top_k=None, batch_size=64)
         
         # Return raw outputs; client will handle remapping if needed
         _json_response(self, {"raw_outputs": raw_outputs})
