@@ -1,174 +1,270 @@
+#!/usr/bin/env python3
+"""
+Fix Hindi 'joy' hypothesis scores in existing parquet chunks.
+Matches rows by text, re-infers the joy hypothesis, and replaces the score.
+"""
+
+from __future__ import annotations
+
 import argparse
+import json
+import os
+from pathlib import Path
+from typing import Any
+from urllib import error as urllib_error
+from urllib import request as urllib_request
+
 import pandas as pd
-from datasets import Dataset
+from datasets import load_dataset
 from tqdm import tqdm
-from datasets import load_dataset # Added import for load_dataset
 
-from emotion_bootstrapper import VerboseSemanticBootstrapper
+CORRECTED_HINDI_JOY = (
+    "किसी को कम से कम बड़े आनंद और खुशी की एक मजबूत भावना महसूस हो रही है"
+)
 
 
-def fix_hindi_joy_scores(
-    input_parquet_path: str,
-    output_parquet_path: str,
-    model_name: str | None = None,
-    source_multilingual_dataset_path: str, # Added argument
-    source_text_column: str = "text", # Added argument
-    source_language_column: str = "translation_language", # Added argument
-    device_map: str = "auto",
-    inference_batch_size: int = 32,
-) -> None:
-    """
-    Loads an augmented dataset, identifies Hindi entries, re-bootstraps their
-    emotion scores using the corrected Hindi 'joy' hypothesis, and saves the
-    updated dataset.
-
-    Args:
-        input_parquet_path: Path to the input augmented Parquet file.
-        output_parquet_path: Path to save the corrected Parquet file.
-        model_name: The name of the Hugging Face model to use for bootstrapping.
-                    Defaults to "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli" for multilingual.
-        source_multilingual_dataset_path: Path to the Hugging Face dataset
-                                          containing the original multilingual texts.
-        source_text_column: The name of the text column in the source multilingual dataset.
-        source_language_column: The name of the language column in the source multilingual dataset.
-        device_map: Device to run the model on (e.g., "auto", "cpu", "cuda:0").
-        inference_batch_size: Batch size for model inference.
-    """
-    print(f"Loading target dataset from {input_parquet_path}...")
-    df_target = pd.read_parquet(input_parquet_path)
-    print(f"Target dataset loaded with {len(df_target)} rows.")
-
-    if "text" not in df_target.columns:
-        raise ValueError("The target input dataset must contain a 'text' column.")
-    if "emotion_vector" not in df_target.columns:
-        raise ValueError(
-            "The target input dataset must contain an 'emotion_vector' column."
-        )
-
-    print(f"Loading source multilingual dataset from {source_multilingual_dataset_path}...")
-    # Load the source dataset (e.g., DerivedFunction01/mt-emotions)
-    # Assuming it's a Hugging Face dataset, we load the 'train' split or the first available.
-    source_dataset_dict = load_dataset(source_multilingual_dataset_path)
-    source_dataset = (
-        source_dataset_dict["train"]
-        if "train" in source_dataset_dict
-        else next(iter(source_dataset_dict.values()))
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Fix Hindi joy hypothesis scores in emotion chunks."
     )
-    print(f"Source dataset loaded with {len(source_dataset)} rows.")
+    parser.add_argument(
+        "--chunks-dir", required=True, help="Directory containing chunk_*.parquet files"
+    )
+    parser.add_argument(
+        "--output-parquet", required=True, help="Final output parquet path to patch"
+    )
+    parser.add_argument(
+        "--server-url",
+        required=True,
+        help="Emotion inference server URL (e.g., http://127.0.0.1:8000)",
+    )
+    parser.add_argument(
+        "--batch-size", type=int, default=32, help="Batch size for inference"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Don't write, just report what would change",
+    )
+    return parser.parse_args()
 
-    if source_text_column not in source_dataset.column_names:
-        raise ValueError(
-            f"The source dataset must contain a '{source_text_column}' column."
+
+def _post_json(
+    url: str, payload: dict[str, Any], timeout: float = 300.0
+) -> dict[str, Any]:
+    """POST JSON to server and get response."""
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib_request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=timeout) as response:
+            return json.load(response)
+    except urllib_error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Server request failed for {url}: {exc.code} {detail}"
+        ) from exc
+
+
+def load_original_hindi_texts() -> set[str]:
+    """Load the original mt-emotions dataset and extract Hindi texts."""
+    print("Loading original DerivedFunction01/mt-emotions dataset...")
+    try:
+        dataset_dict = load_dataset("DerivedFunction01/mt-emotions")
+        dataset = (
+            dataset_dict["train"]
+            if "train" in dataset_dict
+            else next(iter(dataset_dict.values()))
         )
-    if source_language_column not in source_dataset.column_names:
-        raise ValueError(
-            f"The source dataset must contain a '{source_language_column}' column "
-            "to identify Hindi entries."
-        )
+    except Exception as e:
+        print(f"Error loading dataset: {e}")
+        print("You may need to be authenticated or have network access.")
+        raise
 
-    # Filter source dataset for Hindi entries
-    hindi_source_df = source_dataset.to_pandas()
-    hindi_source_mask = hindi_source_df[source_language_column].str.lower() == "hindi"
-    hindi_texts_to_rebootstrap = hindi_source_df.loc[hindi_source_mask, source_text_column].tolist()
+    # Filter for Hindi rows
+    if "translation_language" in dataset.column_names:
+        hindi_rows = dataset.filter(lambda row: row["translation_language"] == "hindi")
+    else:
+        hindi_rows = dataset
 
-    if not hindi_texts_to_rebootstrap:
-        print("No Hindi entries found in the source dataset. No changes needed.")
-        df_target.to_parquet(output_parquet_path, index=False)
+    hindi_texts = set(hindi_rows["text"])
+    print(f"Found {len(hindi_texts)} Hindi texts in original dataset")
+    return hindi_texts
+
+
+def find_hindi_rows_in_chunks(
+    chunks_dir: Path, hindi_texts: set[str]
+) -> dict[Path, list[int]]:
+    """Find which chunks and rows contain Hindi texts."""
+    chunk_paths = sorted(chunks_dir.glob("chunk_*.parquet"))
+    hindi_matches: dict[Path, list[int]] = {}
+
+    print(f"\nSearching {len(chunk_paths)} chunks for Hindi texts...")
+    for chunk_path in tqdm(chunk_paths, desc="Scanning chunks"):
+        df = pd.read_parquet(chunk_path)
+        if "text" not in df.columns:
+            continue
+
+        matching_rows = []
+        for idx, text in enumerate(df["text"]):
+            if str(text) in hindi_texts:
+                matching_rows.append(idx)
+
+        if matching_rows:
+            hindi_matches[chunk_path] = matching_rows
+
+    total_hindi = sum(len(rows) for rows in hindi_matches.values())
+    print(f"Found {total_hindi} Hindi rows across {len(hindi_matches)} chunks")
+    return hindi_matches
+
+
+def infer_joy_scores(
+    server_url: str, texts: list[str], batch_size: int = 32
+) -> dict[str, float]:
+    """Infer joy scores for texts using the server."""
+    # Load tokenizer to tokenize premise/hypothesis pairs
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained("MoritzLaurer/mDeBERTa-v3-base-mnli-xnli")
+
+    # Create premise/hypothesis pairs for joy only
+    pair_texts = texts
+    pair_hypotheses = [CORRECTED_HINDI_JOY] * len(texts)
+
+    # Tokenize all pairs
+    tokenized = tokenizer(
+        pair_texts,
+        pair_hypotheses,
+        padding=True,
+        truncation=True,
+        max_length=512,
+        return_dict=True,
+    )
+
+    # Send to server in batches
+    all_scores = []
+    for start in tqdm(
+        range(0, len(tokenized["input_ids"]), batch_size),
+        desc="Inferring joy scores",
+        total=(len(tokenized["input_ids"]) + batch_size - 1) // batch_size,
+    ):
+        end = min(start + batch_size, len(tokenized["input_ids"]))
+        batch = {
+            "examples": [
+                {
+                    "input_ids": tokenized["input_ids"][i],
+                    "attention_mask": tokenized["attention_mask"][i],
+                }
+                for i in range(start, end)
+            ]
+        }
+        response = _post_json(f"{server_url.rstrip('/')}/infer", batch)
+        scores = response.get("entailment_scores", [])
+        all_scores.extend(scores)
+
+    # Map back to original texts
+    text_to_score = {text: float(score) for text, score in zip(texts, all_scores)}
+    return text_to_score
+
+
+def update_emotion_vector(emotion_vector: dict, joy_score: float) -> dict:
+    """Update emotion_vector with new joy score."""
+    updated = dict(emotion_vector)
+    updated["joy"] = joy_score
+    return updated
+
+
+def fix_chunks(
+    chunks_dir: Path,
+    hindi_matches: dict[Path, list[int]],
+    server_url: str,
+    batch_size: int = 32,
+    dry_run: bool = False,
+) -> None:
+    """Fix joy scores in chunks."""
+    total_fixed = 0
+
+    for chunk_path, row_indices in tqdm(hindi_matches.items(), desc="Fixing chunks"):
+        df = pd.read_parquet(chunk_path)
+
+        # Extract texts and infer joy scores
+        texts_to_infer = [df.iloc[idx]["text"] for idx in row_indices]
+        text_to_joy_score = infer_joy_scores(server_url, texts_to_infer, batch_size)
+
+        # Update emotion vectors
+        for idx in row_indices:
+            old_emotion_vector = df.loc[idx, "emotion_vector"]
+            new_emotion_vector = update_emotion_vector(
+                old_emotion_vector, text_to_joy_score[df.iloc[idx]["text"]]
+            )
+            df.loc[idx, "emotion_vector"] = new_emotion_vector
+
+        if not dry_run:
+            df.to_parquet(chunk_path, index=False)
+            print(f"Updated {chunk_path}: {len(row_indices)} rows fixed")
+
+        total_fixed += len(row_indices)
+
+    print(f"\nTotal rows fixed: {total_fixed}")
+    return total_fixed
+
+
+def rebuild_final_parquet(
+    chunks_dir: Path, output_parquet: Path, dry_run: bool = False
+) -> None:
+    """Rebuild final parquet from updated chunks."""
+    if dry_run:
+        print(f"\n[DRY RUN] Would rebuild {output_parquet} from chunks in {chunks_dir}")
         return
 
-    print(f"Found {len(hindi_texts_to_rebootstrap)} Hindi texts in the source dataset to re-bootstrap.")
+    chunk_paths = sorted(chunks_dir.glob("chunk_*.parquet"))
+    if not chunk_paths:
+        raise FileNotFoundError(f"No chunks found in {chunks_dir}")
 
-    # Initialize the bootstrapper with multilingual support
-    # It will now use the corrected SEMANTIC_HYPOTHESES_MULTILINGUAL from emotion_bootstrapper.py
-    bootstrapper = VerboseSemanticBootstrapper(
-        model=model_name, device_map=device_map, multilingual=True
+    print(f"Rebuilding {output_parquet} from {len(chunk_paths)} chunks...")
+    dfs = [pd.read_parquet(path) for path in tqdm(chunk_paths, desc="Loading chunks")]
+    final_df = pd.concat(dfs, ignore_index=True)
+
+    # Atomic write
+    tmp_path = output_parquet.with_suffix(output_parquet.suffix + ".tmp")
+    final_df.to_parquet(tmp_path, index=False)
+    os.replace(tmp_path, output_parquet)
+    print(f"Saved {output_parquet}")
+
+
+def main() -> None:
+    args = parse_args()
+    chunks_dir = Path(args.chunks_dir)
+    output_parquet = Path(args.output_parquet)
+
+    if not chunks_dir.exists():
+        raise FileNotFoundError(f"Chunks directory not found: {chunks_dir}")
+
+    # Step 1: Load original Hindi texts
+    hindi_texts = load_original_hindi_texts()
+
+    # Step 2: Find Hindi rows in chunks
+    hindi_matches = find_hindi_rows_in_chunks(chunks_dir, hindi_texts)
+    if not hindi_matches:
+        print("No Hindi texts found in chunks. Nothing to fix.")
+        return
+
+    # Step 3: Fix chunks with corrected joy scores
+    print(f"\nServer: {args.server_url}")
+    total_fixed = fix_chunks(
+        chunks_dir, hindi_matches, args.server_url, args.batch_size, args.dry_run
     )
 
-    print("Re-bootstrapping emotion scores for Hindi texts...")
-    new_emotion_vectors_for_hindi = bootstrapper.label_texts(
-        hindi_texts_to_rebootstrap, inference_batch_size=inference_batch_size
-    )
+    # Step 4: Rebuild final parquet
+    if total_fixed > 0 and not args.dry_run:
+        rebuild_final_parquet(chunks_dir, output_parquet, args.dry_run)
 
-    # Create a mapping from Hindi text to its new 'joy' score
-    hindi_text_to_new_joy_score = {
-        text: vector.get("joy")
-        for text, vector in zip(hindi_texts_to_rebootstrap, new_emotion_vectors_for_hindi)
-        if "joy" in vector # Ensure 'joy' is present
-    }
-
-    print("Updating 'joy' scores in the target dataset by text matching...")
-    # Iterate through the target DataFrame and update 'joy' scores
-    updated_emotion_vectors = df_target["emotion_vector"].tolist()
-    texts_in_target = df_target["text"].tolist()
-
-    num_updated = 0
-    for i, text in enumerate(tqdm(texts_in_target, desc="Matching and updating joy scores")):
-        if text in hindi_text_to_new_joy_score:
-            new_joy_score = hindi_text_to_new_joy_score[text]
-            if updated_emotion_vectors[i] is None:
-                updated_emotion_vectors[i] = {} # Initialize if None
-            updated_emotion_vectors[i]["joy"] = new_joy_score
-            num_updated += 1
-
-    df_target["emotion_vector"] = updated_emotion_vectors
-
-    print(f"Successfully updated 'joy' scores for {num_updated} Hindi entries in the target dataset.")
-    print(f"Saving updated dataset to {output_parquet_path}...")
-    df_target.to_parquet(output_parquet_path, index=False)
-    print("Done.")
+    print("\nDone!")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Fix Hindi 'joy' emotion scores in an augmented dataset by text matching."
-    )
-    parser.add_argument(
-        "--input-parquet",
-        required=True,
-        help="Path to the input augmented Parquet file.",
-    )
-    parser.add_argument(
-        "--output-parquet",
-        required=True,
-        help="Path to save the corrected Parquet file.",
-    )
-    parser.add_argument(
-        "--source-multilingual-dataset-path",
-        required=True,
-        help="Path to the Hugging Face dataset containing the original multilingual texts (e.g., DerivedFunction01/mt-emotions).",
-    )
-    parser.add_argument(
-        "--model",
-        default=None,
-        help="Hugging Face model name (default: mDeBERTa-v3-base-mnli-xnli).",
-    )
-    parser.add_argument(
-        "--device-map",
-        default="auto",
-        help="Device to run the model on (e.g., 'auto', 'cpu', 'cuda:0').",
-    )
-    parser.add_argument(
-        "--batch-size", type=int, default=32, help="Batch size for model inference."
-    )
-    parser.add_argument(
-        "--source-text-column",
-        default="text",
-        help="Name of the text column in the source multilingual dataset.",
-    )
-    parser.add_argument(
-        "--source-language-column",
-        default="translation_language",
-        help="Name of the language column in the source multilingual dataset (e.g., 'translation_language' or 'lang').",
-    )
-    args = parser.parse_args()
-
-    fix_hindi_joy_scores(
-        args.input_parquet,
-        args.output_parquet,
-        args.model,
-        args.device_map,
-        args.batch_size,
-        args.source_multilingual_dataset_path,
-        args.source_text_column,
-        args.source_language_column,
-    )
+    main()
