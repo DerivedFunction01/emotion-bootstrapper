@@ -184,7 +184,7 @@ def fix_chunks(
     server_url: str,
     batch_size: int = 32,
     dry_run: bool = False,
-) -> None:
+) -> int:
     """Fix joy scores in chunks."""
     total_fixed = 0
 
@@ -195,13 +195,20 @@ def fix_chunks(
         texts_to_infer = [df.iloc[idx]["text"] for idx in row_indices]
         text_to_joy_score = infer_joy_scores(server_url, texts_to_infer, batch_size)
 
-        # Update emotion vectors
-        for idx in row_indices:
-            old_emotion_vector = df.loc[idx, "emotion_vector"]
-            new_emotion_vector = update_emotion_vector(
-                old_emotion_vector, text_to_joy_score[df.iloc[idx]["text"]]
-            )
-            df.loc[idx, "emotion_vector"] = new_emotion_vector
+        # Build new emotion_vector column as list of dicts
+        emotion_vectors = []
+        for idx in range(len(df)):
+            if idx in row_indices:
+                old_vector = df.iloc[idx]["emotion_vector"]
+                new_vector = update_emotion_vector(
+                    old_vector, text_to_joy_score[df.iloc[idx]["text"]]
+                )
+                emotion_vectors.append(new_vector)
+            else:
+                emotion_vectors.append(df.iloc[idx]["emotion_vector"])
+
+        # Replace entire column
+        df["emotion_vector"] = emotion_vectors
 
         if not dry_run:
             df.to_parquet(chunk_path, index=False)
