@@ -32,6 +32,7 @@ class ServerSpec:
     device_id: int
     pid: int
     url: str
+    model: str
 
 
 def parse_args() -> argparse.Namespace:
@@ -192,6 +193,7 @@ def start_servers(args: argparse.Namespace) -> None:
                 device_id=device_id,
                 pid=proc.pid,
                 url=_server_url(args.host, port),
+                model=model_for_this_server,
             )
         )
         print(f"Started {specs[-1].name} (model: {model_for_this_server}) at {specs[-1].url} (pid {proc.pid})")
